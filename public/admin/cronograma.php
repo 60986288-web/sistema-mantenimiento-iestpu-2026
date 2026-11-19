@@ -56,6 +56,8 @@ renderHeader('Cronograma de Mantenimiento Preventivo', 'cronograma');
         <a href="cronograma.php?programa=APSTI" class="btn btn-sm <?= $prog==='APSTI'?'btn-primary':'btn-outline-primary' ?>">APSTI</a>
         <a href="cronograma.php?programa=CAFETIN" class="btn btn-sm <?= $prog==='CAFETIN'?'btn-warning text-dark fw-bold':'btn-outline-warning text-dark' ?>">Cafetín</a>
         <a href="cronograma.php?programa=CONT" class="btn btn-sm <?= $prog==='CONT'?'btn-success':'btn-outline-success' ?>">Contabilidad</a>
+        <a href="cronograma.php?programa=ENFE" class="btn btn-sm <?= $prog==='ENFE'?'btn-info fw-bold':'btn-outline-info' ?>">Enfermería</a>
+        <a href="cronograma.php?programa=AGRO" class="btn btn-sm <?= $prog==='AGRO'?'btn-success':'btn-outline-success' ?>">Agropecuaria</a>
         <a href="cronograma.php?programa=<?= urlencode($prog) ?>&export=xls" class="btn btn-success btn-sm fw-bold"><i class="fa-solid fa-file-excel me-1"></i> Exportar Cronograma (.xls)</a>
         <button onclick="window.print()" class="btn btn-danger btn-sm fw-bold"><i class="fa-solid fa-file-pdf me-1"></i> Imprimir PDF</button>
     </div>

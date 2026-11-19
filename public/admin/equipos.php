@@ -135,6 +135,8 @@ renderHeader('Módulo 1: Inventario General de Bienes', 'inventario');
             <a href="equipos.php?programa=APSTI" class="btn btn-sm <?= $prog==='APSTI'?'btn-primary':'btn-outline-primary' ?>">APSTI (Lab. 1 / Ensamblaje)</a>
             <a href="equipos.php?programa=CAFETIN" class="btn btn-sm <?= $prog==='CAFETIN'?'btn-warning text-dark fw-bold':'btn-outline-warning text-dark' ?>">Módulo Cafetín</a>
             <a href="equipos.php?programa=CONT" class="btn btn-sm <?= $prog==='CONT'?'btn-success':'btn-outline-success' ?>">Contabilidad</a>
+            <a href="equipos.php?programa=ENFE" class="btn btn-sm <?= $prog==='ENFE'?'btn-info fw-bold':'btn-outline-info' ?>">Enfermería Técnica</a>
+            <a href="equipos.php?programa=AGRO" class="btn btn-sm <?= $prog==='AGRO'?'btn-success':'btn-outline-success' ?>">Prod. Agropecuaria</a>
             <a href="equipos.php?programa=ADMIN" class="btn btn-sm <?= $prog==='ADMIN'?'btn-secondary':'btn-outline-secondary' ?>">Dirección / Admin</a>
         </div>
         <div class="col-md-6">

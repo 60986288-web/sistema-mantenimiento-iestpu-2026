@@ -39,7 +39,7 @@ return [
         'puerto' => (int)(getenv('DB_PORT') ?: 4000),
         'nombre' => getenv('DB_NAME') ?: 'bd_mantenimiento_iestpu',
         'usuario' => getenv('DB_USER') ?: '32QaGLepiVxyEyo.root',
-        'clave' => getenv('DB_PASS') ?: 'jWlhah1gqAW3Ffob',
+        'clave' => getenv('DB_PASS') ?: '9yDFWoqyJkB3dklk',
         'charset' => 'utf8mb4',
     ],
 ];
