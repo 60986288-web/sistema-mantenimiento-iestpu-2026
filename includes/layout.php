@@ -150,8 +150,8 @@ function renderHeader(string $titulo, string $activeMenu = 'inicio'): void {
         html[data-theme="dark"] .btn-outline-warning,
         html[data-theme="dark"] .btn-outline-success { color: #cbd5e1 !important; border-color: #3b4f6b !important; }
 
-        .nav-section { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: #8fa6c2; padding: 11px 18px 3px; font-weight: 700; }
-        .sidebar a.nav-link { color: #cbd5e1; padding: 8px 15px; border-radius: 7px; margin: 2px 10px; font-size: 0.84rem; display: flex; align-items: center; gap: 10px; text-decoration: none; transition: all 0.15s; }
+        .nav-section { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: #8fa6c2; padding: 8px 16px 2px; font-weight: 700; }
+        .sidebar a.nav-link { color: #cbd5e1; padding: 6px 14px; border-radius: 7px; margin: 1px 10px; font-size: 0.83rem; display: flex; align-items: center; gap: 10px; text-decoration: none; transition: all 0.15s; }
         .sidebar a.nav-link:hover { background: var(--sidebar-hover); color: #fff; }
         .sidebar a.nav-link.active { background: var(--sidebar-active); color: #fff; font-weight: 600; }
 
@@ -228,9 +228,8 @@ function renderHeader(string $titulo, string $activeMenu = 'inicio'): void {
         <div class="nav-section">Seguridad y Cuentas</div>
         <a href="<?= baseUrl('admin/usuarios.php') ?>" class="nav-link <?= $activeMenu==='usuarios'?'active':'' ?>"><i class="fa-solid fa-users-gear fa-fw"></i> Usuarios y Contraseñas</a>
     </div>
-    <div class="p-3 border-top" style="border-color:rgba(255,255,255,0.08)!important;">
-        <a href="<?= baseUrl('instalar.php') ?>" class="btn btn-sm w-100 mb-2" style="font-size:0.75rem;background:#243754;color:#cbd5e1;border:1px solid #355078;"><i class="fa-solid fa-database me-1"></i> Sincronizar BD</a>
-        <a href="<?= baseUrl('logout.php') ?>" class="btn btn-sm w-100" style="font-size:0.77rem;background:transparent;color:#fca5a5;border:1px solid rgba(252,165,165,0.3);"><i class="fa-solid fa-right-from-bracket me-1"></i> Cerrar Sesión</a>
+    <div class="p-2 px-3 border-top" style="border-color:rgba(255,255,255,0.08)!important;">
+        <a href="<?= baseUrl('logout.php') ?>" class="btn btn-sm w-100 fw-semibold" style="font-size:0.80rem;background:rgba(155,44,44,0.22);color:#fecaca;border:1px solid rgba(252,165,165,0.35);"><i class="fa-solid fa-right-from-bracket me-1"></i> Cerrar Sesión</a>
     </div>
 </div>
 <div class="main-content">
@@ -245,6 +244,9 @@ function renderHeader(string $titulo, string $activeMenu = 'inicio'): void {
             </button>
             <a href="<?= baseUrl('admin/buscar_equipo.php') ?>" class="btn btn-outline-primary btn-sm" style="border-radius:8px;font-size:0.78rem;">
                 <i class="fa-solid fa-magnifying-glass me-1"></i> Buscar Código / Serie
+            </a>
+            <a href="<?= baseUrl('logout.php') ?>" class="btn btn-outline-danger btn-sm" style="border-radius:8px;font-size:0.78rem;">
+                <i class="fa-solid fa-right-from-bracket me-1"></i> Cerrar Sesión
             </a>
         </div>
     </div>
