@@ -155,10 +155,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
             <div class="text-center mt-3 pt-2">
                 <div class="text-secondary" style="font-size:0.74rem;">Instituto de Educación Superior Tecnológico Público <strong>«UTCUBAMBA»</strong></div>
-                <div class="d-flex justify-content-center gap-3 mt-2">
-                    <a href="instalar.php" class="text-info" style="font-size:0.73rem;text-decoration:none;"><i class="fa-solid fa-database me-1"></i>Reparar BD Local (XAMPP)</a>
-                    <a href="instalar.php?target=tidb" class="text-warning" style="font-size:0.73rem;text-decoration:none;"><i class="fa-solid fa-cloud-arrow-up me-1"></i>Subir BD a TiDB Cloud</a>
-                </div>
+
             </div>
         </div>
     </div>
