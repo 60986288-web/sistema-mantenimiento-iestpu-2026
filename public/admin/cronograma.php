@@ -1,114 +1,139 @@
 <?php
-require_once dirname(__DIR__, 2) . '/includes/db.php';
-require_once dirname(__DIR__, 2) . '/includes/layout.php';
-$u = requireLogin();
-$pdo = getPDO();
-$msg = '';
+declare(strict_types=1);
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['programar_visita'])) {
-    $id = (int)$_POST['bien_id'];
-    $f_tec = $_POST['fecha_viene_tecnico'] ?: '2026-11-15';
-    $p_vis = $_POST['proxima_visita'] ?: '2027-02-15';
-    $f_lim = $_POST['fecha_limite_mantenimiento'] ?: '2026-11-30';
-    $st = $pdo->prepare("UPDATE bienes_inventario SET estado_visita='Programado', fecha_viene_tecnico=?, proxima_visita=?, fecha_limite_mantenimiento=? WHERE id=?");
-    $st->execute([$f_tec, $p_vis, $f_lim, $id]);
-    $msg = "Fechas del Cronograma Preventivo actualizadas correctamente.";
-}
+require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/../../includes/layout.php';
 
-$prog = $_GET['programa'] ?? '';
-$sql = "SELECT * FROM bienes_inventario WHERE requiere_mantenimiento=1";
+$u = require_role(['admin', 'tecnico', 'coordinador_apsti', 'coordinador_cont', 'coordinador_enfe', 'coordinador_agro']);
+$scope = get_user_program_scope($u);
+$pdo = getDB();
+
+$prog = $scope !== null ? $scope : strtoupper(trim((string)($_GET['programa'] ?? '')));
+$q = trim((string)($_GET['q'] ?? ''));
+$page = max(1, (int)($_GET['page'] ?? 1));
+$perPage = 20;
+
+$where = ['requiere_mantenimiento = 1'];
 $params = [];
 if ($prog !== '') {
-    $sql .= " AND programa = ?";
+    $where[] = 'programa = ?';
     $params[] = $prog;
 }
-$sql .= " ORDER BY fecha_limite_mantenimiento ASC";
-$st = $pdo->prepare($sql);
-$st->execute($params);
-$bienes = $st->fetchAll();
-
-if (($_GET['export'] ?? '') === 'xls') {
-    $rowsXls = [];
-    foreach ($bienes as $b) {
-        $rowsXls[] = [
-            $b['codigo_apsti'], $b['denominacion'] . ' ' . $b['marca'],
-            $b['programa'], $b['area_ambiente'], $b['responsable'],
-            $b['fecha_viene_tecnico'], $b['proxima_visita'], $b['fecha_limite_mantenimiento'], $b['estado_servicio']
-        ];
-    }
-    exportarTablaXLS(
-        'Cronograma_Preventivo_IESTPU_2026',
-        'CRONOGRAMA OFICIAL DE VERIFICACIÓN Y MANTENIMIENTO PREVENTIVO — IESTP UTCUBAMBA',
-        ['Código del Bien', 'Equipo / Marca', 'Programa', 'Área / Ambiente', 'Responsable', 'Fecha Viene Técnico', 'Próxima Visita Preventiva', 'Fecha Límite Mant.', 'Estado del Servicio'],
-        $rowsXls
-    );
+if ($q !== '') {
+    $where[] = '(codigo_apsti LIKE ? OR denominacion LIKE ? OR area_ambiente LIKE ?)';
+    $like = '%' . $q . '%';
+    array_push($params, $like, $like, $like);
 }
 
-renderHeader('Cronograma de Mantenimiento Preventivo', 'cronograma');
+$whereSql = ' WHERE ' . implode(' AND ', $where);
+$stCount = $pdo->prepare("SELECT COUNT(*) FROM bienes_inventario {$whereSql}");
+$stCount->execute($params);
+$totalRows = (int)$stCount->fetchColumn();
+$totalPages = max(1, (int)ceil($totalRows / $perPage));
+$page = min($page, $totalPages);
+$offset = ($page - 1) * $perPage;
+
+$st = $pdo->prepare("SELECT * FROM bienes_inventario {$whereSql} ORDER BY fecha_limite_mantenimiento ASC, id ASC LIMIT {$perPage} OFFSET {$offset}");
+$st->execute($params);
+$equipos = $st->fetchAll();
+
+renderHeader('Cronograma Preventivo de Mantenimiento', 'cronograma');
 ?>
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2 no-print">
+
+<div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
     <div>
-        <h4 class="fw-bold mb-0"><i class="fa-solid fa-calendar-check text-primary me-1"></i> Cronograma de Verificación y Mantenimiento Preventivo</h4>
-        <small class="text-secondary">Sincronizado automáticamente por el Área Técnica y visible para los Coordinadores de cada Programa de Estudios</small>
-    </div>
-    <div class="d-flex flex-wrap gap-2">
-        <a href="cronograma.php" class="btn btn-sm <?= $prog===''?'btn-dark':'btn-outline-dark' ?>">Todos</a>
-        <a href="cronograma.php?programa=APSTI" class="btn btn-sm <?= $prog==='APSTI'?'btn-primary':'btn-outline-primary' ?>">APSTI</a>
-        <a href="cronograma.php?programa=CAFETIN" class="btn btn-sm <?= $prog==='CAFETIN'?'btn-warning text-dark fw-bold':'btn-outline-warning text-dark' ?>">Cafetín</a>
-        <a href="cronograma.php?programa=CONT" class="btn btn-sm <?= $prog==='CONT'?'btn-success':'btn-outline-success' ?>">Contabilidad</a>
-        <a href="cronograma.php?programa=ENFE" class="btn btn-sm <?= $prog==='ENFE'?'btn-info fw-bold':'btn-outline-info' ?>">Enfermería</a>
-        <a href="cronograma.php?programa=AGRO" class="btn btn-sm <?= $prog==='AGRO'?'btn-success':'btn-outline-success' ?>">Agropecuaria</a>
-        <a href="cronograma.php?programa=<?= urlencode($prog) ?>&export=xls" class="btn btn-success btn-sm fw-bold"><i class="fa-solid fa-file-excel me-1"></i> Exportar Cronograma (.xls)</a>
-        <button onclick="window.print()" class="btn btn-danger btn-sm fw-bold"><i class="fa-solid fa-file-pdf me-1"></i> Imprimir PDF</button>
+        <h4 class="fw-bold mb-0">Cronograma Preventivo con Semáforo de Alertas</h4>
+        <div class="small text-muted">Mostrando <?= count($equipos) ?> de <?= $totalRows ?> equipos sujetos a mantenimiento (Página <?= $page ?> de <?= $totalPages ?>).</div>
     </div>
 </div>
 
-<?php if ($msg): ?>
-    <div class="alert alert-success py-2 small no-print"><i class="fa-solid fa-circle-check me-1"></i> <?= htmlspecialchars($msg) ?></div>
-<?php endif; ?>
+<div class="card-clean p-3 mb-3">
+    <form method="GET" class="row g-2 align-items-end">
+        <div class="col-md-5">
+            <label class="form-label small fw-semibold mb-1">Buscar código, equipo o ambiente</label>
+            <input type="text" name="q" value="<?= h($q) ?>" class="form-control form-control-sm" placeholder="Ej.: APSTI-CPU, Impresora, Lab...">
+        </div>
+        <?php if ($scope === null): ?>
+            <div class="col-md-4">
+                <label class="form-label small fw-semibold mb-1">Programa / Área</label>
+                <select name="programa" class="form-select form-select-sm">
+                    <option value="">Todas las áreas</option>
+                    <option value="APSTI" <?= $prog === 'APSTI' ? 'selected' : '' ?>>APSTI</option>
+                    <option value="CONT" <?= $prog === 'CONT' ? 'selected' : '' ?>>Contabilidad</option>
+                    <option value="ENFE" <?= $prog === 'ENFE' ? 'selected' : '' ?>>Enfermería Técnica</option>
+                    <option value="AGRO" <?= $prog === 'AGRO' ? 'selected' : '' ?>>Producción Agropecuaria</option>
+                    <option value="CAFETIN" <?= $prog === 'CAFETIN' ? 'selected' : '' ?>>Cafetín</option>
+                    <option value="ADMIN" <?= $prog === 'ADMIN' ? 'selected' : '' ?>>Dirección / Admin</option>
+                </select>
+            </div>
+        <?php endif; ?>
+        <div class="col-md-3 d-flex gap-2">
+            <button type="submit" class="btn btn-sm btn-petrol flex-grow-1"><i class="fa-solid fa-filter me-1"></i>Filtrar</button>
+            <a href="<?= h(baseUrl('admin/cronograma.php')) ?>" class="btn btn-sm btn-outline-secondary">Limpiar</a>
+        </div>
+    </form>
+</div>
 
-<div class="card p-3 shadow-sm">
+<div class="card-clean p-3">
     <div class="table-responsive">
-        <table class="table table-sm table-bordered table-striped align-middle small mb-0">
-            <thead class="table-dark">
+        <table class="table table-hover align-middle small mb-0">
+            <thead>
                 <tr>
-                    <th>Código</th>
-                    <th>Equipo / Bien</th>
-                    <th>Programa / Área</th>
-                    <th>Fecha Viene Técnico</th>
-                    <th>Próxima Visita Preventiva</th>
-                    <th>Semáforo Fecha Límite</th>
-                    <th>Estado Servicio</th>
-                    <th class="no-print">Reprogramar / Ficha</th>
+                    <th class="nowrap-col">Código</th>
+                    <th>Equipo</th>
+                    <th>Programa / Ambiente</th>
+                    <th class="nowrap-col">Fecha Límite</th>
+                    <th class="nowrap-col">Próxima Visita</th>
+                    <th class="nowrap-col">Semáforo</th>
+                    <th class="nowrap-col">Estado Servicio</th>
                 </tr>
             </thead>
             <tbody>
-            <?php foreach ($bienes as $b):
-                $sem = calcularSemaforo((string)$b['fecha_limite_mantenimiento'], 1);
-            ?>
-                <tr>
-                    <td class="fw-bold text-primary"><?= htmlspecialchars($b['codigo_apsti']) ?></td>
-                    <td><?= htmlspecialchars($b['denominacion'] . ' ' . $b['marca']) ?></td>
-                    <td><?= htmlspecialchars($b['programa'] . ' — ' . $b['area_ambiente']) ?></td>
-                    <td><?= htmlspecialchars($b['fecha_viene_tecnico']) ?></td>
-                    <td class="fw-bold"><?= htmlspecialchars($b['proxima_visita']) ?></td>
-                    <td><span class="badge <?= $sem['clase'] ?>"><?= htmlspecialchars($sem['texto']) ?></span></td>
-                    <td><span class="badge <?= $b['estado_servicio']==='Servicio Completo'?'bg-success':'bg-warning text-dark' ?>"><?= htmlspecialchars($b['estado_servicio']) ?></span></td>
-                    <td class="no-print">
-                        <form method="POST" class="d-flex gap-1 align-items-center">
-                            <input type="hidden" name="programar_visita" value="1">
-                            <input type="hidden" name="bien_id" value="<?= (int)$b['id'] ?>">
-                            <input type="hidden" name="fecha_viene_tecnico" value="<?= htmlspecialchars($b['fecha_viene_tecnico']) ?>">
-                            <input type="hidden" name="proxima_visita" value="<?= htmlspecialchars($b['proxima_visita']) ?>">
-                            <input type="date" name="fecha_limite_mantenimiento" class="form-control form-control-sm py-0" style="width:125px;" value="<?= htmlspecialchars($b['fecha_limite_mantenimiento']) ?>">
-                            <button type="submit" class="btn btn-primary btn-sm py-0 px-2" title="Actualizar Fecha"><i class="fa-solid fa-floppy-disk"></i></button>
-                            <a href="ficha_mantenimiento.php?bien_id=<?= (int)$b['id'] ?>" class="btn btn-dark btn-sm py-0 px-2" title="Ver Ficha"><i class="fa-solid fa-file-pdf"></i></a>
-                        </form>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
+                <?php if (empty($equipos)): ?>
+                    <tr><td colspan="7" class="text-center text-muted py-4">No hay equipos programados para los filtros seleccionados.</td></tr>
+                <?php else: ?>
+                    <?php foreach ($equipos as $e):
+                        $sem = calcularSemaforo((string)($e['fecha_limite_mantenimiento'] ?? ''), 1);
+                    ?>
+                        <tr>
+                            <td class="nowrap-col fw-bold text-primary"><?= h($e['codigo_apsti']) ?></td>
+                            <td class="fw-semibold"><?= h($e['denominacion']) ?></td>
+                            <td>
+                                <span class="badge bg-light text-dark border"><?= h($e['programa']) ?></span>
+                                <span class="text-muted ms-1"><?= h($e['area_ambiente']) ?></span>
+                            </td>
+                            <td class="nowrap-col"><?= h(fmt_fecha($e['fecha_limite_mantenimiento'] ?? null)) ?></td>
+                            <td class="nowrap-col"><?= h(fmt_fecha($e['proxima_visita'] ?? null)) ?></td>
+                            <td class="nowrap-col">
+                                <span class="badge bg-<?= h($sem['clase']) ?>">
+                                    <i class="fa-solid <?= h($sem['icono']) ?> me-1"></i><?= h($sem['texto']) ?>
+                                </span>
+                            </td>
+                            <td class="nowrap-col">
+                                <span class="badge <?= ($e['estado_servicio'] ?? '') === 'Servicio Completo' ? 'bg-success' : 'bg-warning text-dark' ?>">
+                                    <?= h($e['estado_servicio'] ?? 'Servicio Pendiente') ?>
+                                </span>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                <?php endif; ?>
             </tbody>
         </table>
     </div>
+
+    <?php if ($totalPages > 1): ?>
+        <nav class="mt-3 d-flex justify-content-center">
+            <ul class="pagination pagination-sm mb-0">
+                <?php for ($p = 1; $p <= $totalPages; $p++):
+                    $qs = http_build_query(['programa' => $prog, 'q' => $q, 'page' => $p]);
+                ?>
+                    <li class="page-item <?= $p === $page ? 'active' : '' ?>">
+                        <a class="page-link" href="<?= h(baseUrl('admin/cronograma.php?' . $qs)) ?>"><?= $p ?></a>
+                    </li>
+                <?php endfor; ?>
+            </ul>
+        </nav>
+    <?php endif; ?>
 </div>
+
 <?php renderFooter(); ?>

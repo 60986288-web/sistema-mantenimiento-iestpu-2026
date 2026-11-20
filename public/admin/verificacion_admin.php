@@ -1,100 +1,188 @@
 <?php
-require_once dirname(__DIR__, 2) . '/includes/db.php';
-require_once dirname(__DIR__, 2) . '/includes/layout.php';
-$u = requireLogin();
-$pdo = getPDO();
+declare(strict_types=1);
+
+require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/../../includes/layout.php';
+
+$u = require_role(['admin']);
+$pdo = getDB();
+
 $msg = '';
+$err = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $accion = $_POST['accion'] ?? 'verificar';
-    if ($accion === 'verificar') {
-        $sol_id = (int)$_POST['sol_id'];
-        $tipo_ficha = $_POST['tipo_ficha'] ?? 'FICHA DE OBSERVACION';
-        $num_ficha = ($tipo_ficha === 'FICHA DE OBSERVACION' ? 'FICHA-OBS-2026-' : 'FICHA-MNT-2026-') . sprintf('%03d', $sol_id);
-        $tec = trim($_POST['tecnico_asignado'] ?? 'Téc. Carlos Quispe');
-        $fvis = $_POST['fecha_visita'] ?: date('Y-m-d');
-        $obs_adm = trim($_POST['observacion_admin'] ?? 'Verificado conforme por el Administrador. Pasa al Área Técnica con su Ficha.');
-        $st = $pdo->prepare("UPDATE solicitudes_mantenimiento SET verificado_admin=1, fecha_verificacion=?, observacion_admin=?, tipo_ficha=?, numero_ficha=?, tecnico_asignado=?, fecha_visita_programada=?, estado_flujo='2_VERIFICADO_CON_FICHA' WHERE id=?");
-        $st->execute([date('Y-m-d H:i:s'), $obs_adm, $tipo_ficha, $num_ficha, $tec, $fvis, $sol_id]);
-        $msg = "¡Solicitud verificada! Se emitió la $tipo_ficha [$num_ficha] y el equipo pasó al Área Técnica de Mantenimiento.";
-    } elseif ($accion === 'eliminar_sol') {
-        $sol_id = (int)$_POST['sol_id'];
-        $pdo->prepare("DELETE FROM solicitudes_mantenimiento WHERE id=?")->execute([$sol_id]);
-        $msg = "Solicitud eliminada correctamente.";
+    verify_csrf();
+    $accion = (string)($_POST['accion'] ?? '');
+    $solId = (int)($_POST['sol_id'] ?? 0);
+
+    if ($solId > 0) {
+        $stCheck = $pdo->prepare('SELECT * FROM solicitudes_mantenimiento WHERE id = ? LIMIT 1');
+        $stCheck->execute([$solId]);
+        $solActual = $stCheck->fetch();
+
+        if (!$solActual) {
+            $err = 'La solicitud indicada no existe.';
+        } elseif (($solActual['estado_flujo'] ?? '') === '3_ATENDIDO_AREA_TECNICA') {
+            $err = 'Operación bloqueada: la solicitud ' . $solActual['codigo_solicitud'] . ' ya fue atendida y cerrada en el Paso 3.';
+        } elseif ($accion === 'verificar') {
+            $obsAdmin = trim((string)($_POST['observacion_admin'] ?? ''));
+            $tipoFicha = trim((string)($_POST['tipo_ficha'] ?? 'FICHA DE OBSERVACIÓN'));
+            $tecnico = trim((string)($_POST['tecnico_asignado'] ?? ''));
+            $fechaVerif = trim((string)($_POST['fecha_verificacion'] ?? '')) ?: date('Y-m-d');
+
+            if ($obsAdmin === '' || $tecnico === '') {
+                $err = 'Debes ingresar la observación administrativa y seleccionar un técnico asignado.';
+            } else {
+                $pref = stripos($tipoFicha, 'OBSERVAC') !== false ? 'FICHA-OBS' : 'FICHA-MNT';
+                $numFicha = !empty($solActual['numero_ficha'])
+                    ? (string)$solActual['numero_ficha']
+                    : ($pref . '-2026-' . str_pad((string)(13 + $solId), 3, '0', STR_PAD_LEFT));
+
+                $stUpd = $pdo->prepare(
+                    "UPDATE solicitudes_mantenimiento
+                     SET verificado_admin = 1,
+                         fecha_verificacion = ?,
+                         observacion_admin = ?,
+                         tipo_ficha = ?,
+                         numero_ficha = ?,
+                         tecnico_asignado = ?,
+                         estado_flujo = '2_VERIFICADO_CON_FICHA',
+                         resultado_servicio = 'PENDIENTE'
+                     WHERE id = ?"
+                );
+                $stUpd->execute([$fechaVerif, $obsAdmin, $tipoFicha, $numFicha, $tecnico, $solId]);
+                registrar_auditoria($pdo, 'VERIFICAR_Y_EMITIR_FICHA', 'solicitudes_mantenimiento', $solId, "Emitida {$numFicha} -> {$tecnico}");
+                $msg = "Solicitud {$solActual['codigo_solicitud']} verificada. Ficha emitida: {$numFicha}.";
+            }
+        } elseif ($accion === 'eliminar') {
+            $stDel = $pdo->prepare('DELETE FROM solicitudes_mantenimiento WHERE id = ?');
+            $stDel->execute([$solId]);
+            registrar_auditoria($pdo, 'ELIMINAR_SOLICITUD', 'solicitudes_mantenimiento', $solId, "Eliminada {$solActual['codigo_solicitud']}");
+            $msg = "Solicitud {$solActual['codigo_solicitud']} eliminada.";
+        }
     }
 }
 
-$solicitudes = $pdo->query("SELECT * FROM solicitudes_mantenimiento ORDER BY id DESC")->fetchAll();
-renderHeader('Paso 2: Verificación del Administrador y Emisión de Ficha', 'verificacion');
+$tecnicos = $pdo->query("SELECT nombres FROM usuarios WHERE rol = 'tecnico' AND activo = 1 ORDER BY nombres ASC")->fetchAll();
+$solicitudes = $pdo->query('SELECT * FROM solicitudes_mantenimiento ORDER BY id DESC')->fetchAll();
+
+renderHeader('Paso 2: Verificación Administrativa y Emisión de Ficha', 'verificar');
 ?>
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-    <div>
-        <h4 class="fw-bold mb-0"><i class="fa-solid fa-clipboard-check text-primary me-1"></i> Paso 2 del Flujo: El Administrador Visualiza, Verifica y Genera la Ficha</h4>
-        <small class="text-secondary">El Administrador revisa la falla reportada por APSTI y emite la <strong>Ficha de Observación</strong> o <strong>Ficha de Mantenimiento</strong> antes de pasar al Área Técnica</small>
-    </div>
-    <a href="../tecnico/trabajos.php" class="btn btn-success btn-sm fw-bold">Ir al Paso 3: Área Técnica (Con Ficha) →</a>
+
+<div class="mb-3">
+    <h4 class="fw-bold mb-0">Paso 2: Verificación Administrativa y Emisión de Ficha Oficial</h4>
+    <div class="small text-muted">Valida las solicitudes reportadas en Paso 1, asigna técnico responsable y genera el código de ficha oficial.</div>
 </div>
 
 <?php if ($msg): ?>
-    <div class="alert alert-success py-2 small">
-        <i class="fa-solid fa-circle-check me-1"></i> <?= htmlspecialchars($msg) ?>
-        <a href="../tecnico/trabajos.php" class="btn btn-sm btn-dark ms-2 py-0">Ir a Área Técnica →</a>
-    </div>
+    <div class="alert alert-success alert-dismissible fade show py-2 small"><?= h($msg) ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+<?php endif; ?>
+<?php if ($err): ?>
+    <div class="alert alert-danger alert-dismissible fade show py-2 small"><?= h($err) ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
 <?php endif; ?>
 
-<?php foreach ($solicitudes as $s): ?>
-<div class="card mb-3 shadow-sm border-<?= $s['verificado_admin'] ? 'success' : 'warning' ?>">
-    <div class="card-header d-flex flex-wrap justify-content-between align-items-center py-2">
-        <div>
-            <strong><?= htmlspecialchars($s['codigo_solicitud']) ?> — Bien: <span class="text-primary"><?= htmlspecialchars($s['codigo_bien']) ?></span> (<?= htmlspecialchars($s['descripcion_bien']) ?>)</strong>
-            <?php if ($s['numero_ficha']): ?>
-                <span class="badge bg-danger ms-2"><?= htmlspecialchars($s['numero_ficha']) ?></span>
-            <?php endif; ?>
+<div class="row g-3">
+    <?php foreach ($solicitudes as $s):
+        $etapa = (string)($s['estado_flujo'] ?? '1_REPORTADO_AREA');
+        $esCerrada = ($etapa === '3_ATENDIDO_AREA_TECNICA');
+        $ficha = trim((string)($s['numero_ficha'] ?? ''));
+        $tieneFicha = ($ficha !== '' && $etapa !== '1_REPORTADO_AREA');
+    ?>
+        <div class="col-12">
+            <div class="card-clean p-3 p-md-4">
+                <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3 pb-2 border-bottom">
+                    <div>
+                        <span class="badge bg-dark me-1"><?= h($s['codigo_solicitud']) ?></span>
+                        <strong class="text-primary"><?= h($s['codigo_bien']) ?></strong> — <?= h($s['descripcion_bien']) ?>
+                        <div class="small text-muted mt-1">
+                            Área: <?= h($s['area_solicitante']) ?> · Reportó: <?= h($s['usuario_reporta']) ?> · Fecha: <?= h(fmt_fecha_hora($s['fecha_reporte'] ?? null)) ?>
+                        </div>
+                    </div>
+                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                        <?php if ($esCerrada): ?>
+                            <span class="badge bg-success">Paso 3: Cerrada (Solo lectura)</span>
+                        <?php elseif ($tieneFicha): ?>
+                            <span class="badge bg-info text-dark">Paso 2: Verificada (<?= h($ficha) ?>)</span>
+                        <?php else: ?>
+                            <span class="badge bg-warning text-dark">Paso 1: Pendiente de Verificar</span>
+                        <?php endif; ?>
+
+                        <?php if ($tieneFicha): ?>
+                            <a href="<?= h(baseUrl('admin/ficha_mantenimiento.php?sol_id=' . (int)$s['id'])) ?>" target="_blank" class="btn btn-sm btn-emerald">
+                                <i class="fa-solid fa-file-pdf me-1"></i>Abrir Ficha PDF
+                            </a>
+                        <?php else: ?>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Primero verifica y emite el número de ficha">
+                                <i class="fa-solid fa-lock me-1"></i>Ficha no emitida
+                            </button>
+                        <?php endif; ?>
+                    </div>
+                </div>
+
+                <div class="alert alert-light border small py-2 mb-3">
+                    <strong>Falla reportada:</strong> <?= h($s['falla_reportada']) ?>
+                </div>
+
+                <?php if ($esCerrada): ?>
+                    <div class="small text-muted">
+                        <strong>Ficha emitida:</strong> <?= h($ficha) ?> ·
+                        <strong>Verificación:</strong> <?= h(clean_tech_value($s['observacion_admin'] ?? '')) ?> (<?= h(fmt_fecha($s['fecha_verificacion'] ?? null)) ?>) ·
+                        <strong>Técnico:</strong> <?= h(clean_tech_value($s['tecnico_asignado'] ?? '')) ?>.
+                        <span class="badge bg-secondary ms-1">Bloqueada contra re-verificación o eliminación</span>
+                    </div>
+                <?php else: ?>
+                    <form method="POST" class="row g-2 align-items-end">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="accion" value="verificar">
+                        <input type="hidden" name="sol_id" value="<?= (int)$s['id'] ?>">
+
+                        <div class="col-md-4">
+                            <label class="form-label small fw-semibold mb-1">Observación Administrativa <span class="text-danger">*</span></label>
+                            <input type="text" name="observacion_admin" class="form-control form-control-sm"
+                                   value="<?= $tieneFicha ? h((string)($s['observacion_admin'] ?? '')) : '' ?>"
+                                   placeholder="Ej.: Verificado in situ, se autoriza intervención técnica" required>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small fw-semibold mb-1">Tipo de Ficha</label>
+                            <select name="tipo_ficha" class="form-select form-select-sm">
+                                <option value="FICHA DE OBSERVACIÓN" <?= stripos((string)($s['tipo_ficha'] ?? ''), 'OBSERVAC') !== false ? 'selected' : '' ?>>FICHA DE OBSERVACIÓN</option>
+                                <option value="FICHA DE MANTENIMIENTO" <?= stripos((string)($s['tipo_ficha'] ?? ''), 'MANTENIMIENTO') !== false ? 'selected' : '' ?>>FICHA DE MANTENIMIENTO</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small fw-semibold mb-1">Técnico Asignado <span class="text-danger">*</span></label>
+                            <select name="tecnico_asignado" class="form-select form-select-sm" required>
+                                <option value="">-- Seleccionar técnico --</option>
+                                <?php foreach ($tecnicos as $t): ?>
+                                    <option value="<?= h($t['nombres']) ?>" <?= ($tieneFicha && ($s['tecnico_asignado'] ?? '') === $t['nombres']) ? 'selected' : '' ?>>
+                                        <?= h($t['nombres']) ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small fw-semibold mb-1">Fecha Verificación</label>
+                            <input type="date" name="fecha_verificacion" class="form-control form-control-sm"
+                                   value="<?= $tieneFicha && !empty($s['fecha_verificacion']) ? h((string)$s['fecha_verificacion']) : date('Y-m-d') ?>" required>
+                        </div>
+                        <div class="col-md-1 d-grid">
+                            <button type="submit" class="btn btn-sm btn-petrol" title="Guardar y emitir ficha">
+                                <i class="fa-solid fa-check"></i>
+                            </button>
+                        </div>
+                    </form>
+                    <form method="POST" class="mt-2 text-end" onsubmit="return confirm('¿Eliminar esta solicitud pendiente?');">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="accion" value="eliminar">
+                        <input type="hidden" name="sol_id" value="<?= (int)$s['id'] ?>">
+                        <button type="submit" class="btn btn-link btn-sm text-danger text-decoration-none p-0">
+                            <i class="fa-solid fa-trash me-1"></i>Eliminar solicitud pendiente
+                        </button>
+                    </form>
+                <?php endif; ?>
+            </div>
         </div>
-        <div class="d-flex align-items-center gap-2">
-            <span class="badge bg-<?= $s['verificado_admin'] ? 'success' : 'warning text-dark' ?>"><?= htmlspecialchars($s['estado_flujo']) ?></span>
-            <form method="POST" class="d-inline" onsubmit="return confirm('¿Eliminar esta solicitud?');">
-                <input type="hidden" name="accion" value="eliminar_sol">
-                <input type="hidden" name="sol_id" value="<?= (int)$s['id'] ?>">
-                <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-2"><i class="fa-solid fa-trash"></i></button>
-            </form>
-        </div>
-    </div>
-    <div class="card-body small">
-        <div class="mb-2">
-            <strong>Área Solicitante:</strong> <?= htmlspecialchars($s['area_solicitante']) ?> |
-            <strong>Reportado por:</strong> <?= htmlspecialchars($s['usuario_reporta']) ?> |
-            <strong>Prioridad:</strong> <span class="badge bg-danger"><?= htmlspecialchars($s['prioridad']) ?></span><br>
-            <strong>Descripción de la Falla:</strong> <span class="text-dark"><?= htmlspecialchars($s['falla_reportada']) ?></span>
-        </div>
-        <form method="POST" class="row g-2 align-items-end bg-light p-2 rounded border">
-            <input type="hidden" name="accion" value="verificar">
-            <input type="hidden" name="sol_id" value="<?= (int)$s['id'] ?>">
-            <div class="col-md-3">
-                <label class="fw-bold">Tipo de Ficha Oficial a Emitir *</label>
-                <select name="tipo_ficha" class="form-select form-select-sm">
-                    <option value="FICHA DE OBSERVACION" <?= $s['tipo_ficha']==='FICHA DE OBSERVACION'?'selected':'' ?>>Ficha de Observación Técnica</option>
-                    <option value="FICHA DE MANTENIMIENTO" <?= $s['tipo_ficha']==='FICHA DE MANTENIMIENTO'?'selected':'' ?>>Ficha de Registro de Mantenimiento</option>
-                </select>
-            </div>
-            <div class="col-md-3">
-                <label class="fw-bold">Observación de Verificación Admin</label>
-                <input type="text" name="observacion_admin" class="form-control form-control-sm" value="<?= htmlspecialchars($s['observacion_admin'] ?: 'Verificado conforme por Administración. Pasa al Área Técnica con su Ficha.') ?>">
-            </div>
-            <div class="col-md-2">
-                <label class="fw-bold">Técnico Asignado</label>
-                <input type="text" name="tecnico_asignado" class="form-control form-control-sm" value="<?= htmlspecialchars($s['tecnico_asignado'] ?: 'Téc. Carlos Quispe') ?>">
-            </div>
-            <div class="col-md-2">
-                <label class="fw-bold">Fecha Visita</label>
-                <input type="date" name="fecha_visita" class="form-control form-control-sm" value="<?= htmlspecialchars($s['fecha_visita_programada'] ?: '2026-11-11') ?>">
-            </div>
-            <div class="col-md-2 d-flex gap-1">
-                <button class="btn btn-primary btn-sm w-100 fw-bold" type="submit"><i class="fa-solid fa-check-double me-1"></i> Verificar + Ficha</button>
-                <a href="ficha_mantenimiento.php?sol_id=<?= (int)$s['id'] ?>" class="btn btn-dark btn-sm" title="Ver e Imprimir Ficha"><i class="fa-solid fa-file-pdf"></i></a>
-            </div>
-        </form>
-    </div>
+    <?php endforeach; ?>
 </div>
-<?php endforeach; ?>
+
 <?php renderFooter(); ?>

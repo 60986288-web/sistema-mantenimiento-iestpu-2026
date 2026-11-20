@@ -1,104 +1,210 @@
 <?php
-require_once dirname(__DIR__, 2) . '/includes/db.php';
-require_once dirname(__DIR__, 2) . '/includes/layout.php';
-$u = requireLogin();
-$pdo = getPDO();
+declare(strict_types=1);
+
+require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/../../includes/layout.php';
+
+$u = require_role(['admin', 'coordinador_apsti', 'coordinador_cont', 'coordinador_enfe', 'coordinador_agro']);
+$scope = get_user_program_scope($u);
+$pdo = getDB();
+
 $msg = '';
-$preBienId = (int)($_GET['bien_id'] ?? 2);
+$err = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $bien_id = (int)$_POST['bien_id'];
-    $falla = trim($_POST['falla_reportada'] ?? '');
-    $prio = $_POST['prioridad'] ?? 'ALTA';
-    $stB = $pdo->prepare("SELECT * FROM bienes_inventario WHERE id = ?");
-    $stB->execute([$bien_id]);
-    $b = $stB->fetch();
-    if ($b) {
-        $codSol = 'SOL-2026-' . sprintf('%03d', rand(17, 999));
-        $st = $pdo->prepare("INSERT INTO solicitudes_mantenimiento (codigo_solicitud, bien_id, codigo_bien, descripcion_bien, area_solicitante, usuario_reporta, falla_reportada, prioridad, estado_flujo) VALUES (?, ?, ?, ?, ?, ?, ?, ?, '1_REPORTADO_AREA')");
-        $st->execute([$codSol, $b['id'], $b['codigo_apsti'], $b['denominacion'] . ' ' . $b['marca'], $b['programa'] . ' - ' . $b['area_ambiente'], $u['nombres'], $falla, $prio]);
-        $msg = "¡Reporte [$codSol] registrado con éxito por el área! Ahora el Administrador debe verificarlo en el Paso 2 para generar su Ficha.";
+    verify_csrf();
+    $bienId = (int)($_POST['bien_id'] ?? 0);
+    $falla = trim((string)($_POST['falla_reportada'] ?? ''));
+    $prioridad = strtoupper(trim((string)($_POST['prioridad'] ?? 'ALTA')));
+    if (!in_array($prioridad, ['ALTA', 'MEDIA', 'BAJA'], true)) {
+        $prioridad = 'ALTA';
+    }
+
+    if ($bienId <= 0 || $falla === '') {
+        $err = 'Selecciona un equipo y describe la falla presentada.';
+    } else {
+        $stBien = $pdo->prepare('SELECT * FROM bienes_inventario WHERE id = ? LIMIT 1');
+        $stBien->execute([$bienId]);
+        $bien = $stBien->fetch();
+
+        if (!$bien) {
+            $err = 'El equipo seleccionado no existe.';
+        } elseif ($scope !== null && strtoupper((string)$bien['programa']) !== $scope) {
+            render_access_denied('No puedes reportar fallas de equipos que pertenecen a otro programa.');
+        } else {
+            // Bloquear duplicados si ya existe una solicitud abierta/pendiente para el mismo equipo
+            $stOpen = $pdo->prepare("SELECT codigo_solicitud FROM solicitudes_mantenimiento WHERE bien_id = ? AND estado_flujo != '3_ATENDIDO_AREA_TECNICA' LIMIT 1");
+            $stOpen->execute([$bienId]);
+            $abierta = $stOpen->fetch();
+            if ($abierta) {
+                $err = 'Este equipo ya tiene una solicitud abierta pendiente de cierre (' . $abierta['codigo_solicitud'] . ').';
+            } else {
+                try {
+                    $fotoRuta = procesar_foto_evidencia('foto_falla', 'falla');
+                    $nextNum = (int)$pdo->query('SELECT COUNT(*) FROM solicitudes_mantenimiento')->fetchColumn() + 14;
+                    $codigoSol = 'SOL-2026-' . str_pad((string)$nextNum, 3, '0', STR_PAD_LEFT);
+
+                    $stIns = $pdo->prepare(
+                        "INSERT INTO solicitudes_mantenimiento
+                         (codigo_solicitud, bien_id, codigo_bien, descripcion_bien, area_solicitante, usuario_reporta, falla_reportada, prioridad, fecha_reporte, verificado_admin, estado_flujo, resultado_servicio, foto_falla)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, '1_REPORTADO_AREA', 'PENDIENTE', ?)"
+                    );
+                    $stIns->execute([
+                        $codigoSol,
+                        (int)$bien['id'],
+                        (string)$bien['codigo_apsti'],
+                        (string)$bien['denominacion'],
+                        (string)$bien['programa'] . ' - ' . (string)$bien['area_ambiente'],
+                        (string)($u['nombres'] ?? 'Coordinador'),
+                        $falla,
+                        $prioridad,
+                        date('Y-m-d H:i:s'),
+                        $fotoRuta,
+                    ]);
+                    $newId = (int)$pdo->lastInsertId();
+                    registrar_auditoria($pdo, 'REPORTAR_FALLA', 'solicitudes_mantenimiento', $newId, "Solicitud {$codigoSol} para {$bien['codigo_apsti']}");
+                    $msg = "Solicitud {$codigoSol} registrada correctamente. Queda pendiente de verificación por Administración (Paso 2).";
+                } catch (Throwable $ex) {
+                    $err = $ex->getMessage();
+                }
+            }
+        }
     }
 }
 
-$bienes = $pdo->query("SELECT * FROM bienes_inventario ORDER BY id ASC")->fetchAll();
-$misReportes = $pdo->query("SELECT * FROM solicitudes_mantenimiento ORDER BY id DESC")->fetchAll();
+// Cargar selector de equipos filtrado estrictamente por área cuando es coordinador
+if ($scope !== null) {
+    $stEq = $pdo->prepare('SELECT id, codigo_apsti, denominacion, area_ambiente FROM bienes_inventario WHERE programa = ? AND requiere_mantenimiento = 1 ORDER BY codigo_apsti ASC');
+    $stEq->execute([$scope]);
+    $equipos = $stEq->fetchAll();
 
-renderHeader('Paso 1: Reportar Falla (Área APSTI / Coordinación)', 'reportar');
+    $stHist = $pdo->prepare('SELECT s.* FROM solicitudes_mantenimiento s INNER JOIN bienes_inventario b ON b.id = s.bien_id WHERE b.programa = ? ORDER BY s.id DESC');
+    $stHist->execute([$scope]);
+    $historial = $stHist->fetchAll();
+} else {
+    $equipos = $pdo->query('SELECT id, codigo_apsti, denominacion, area_ambiente, programa FROM bienes_inventario WHERE requiere_mantenimiento = 1 ORDER BY programa ASC, codigo_apsti ASC')->fetchAll();
+    $historial = $pdo->query('SELECT * FROM solicitudes_mantenimiento ORDER BY id DESC')->fetchAll();
+}
+
+renderHeader('Paso 1: Reportar Falla de Equipo', 'reportar');
 ?>
-<div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2">
-    <div>
-        <h4 class="fw-bold mb-0"><i class="fa-solid fa-triangle-exclamation text-warning me-1"></i> Paso 1 del Flujo: El Área (APSTI / Coordinación) Reporta una Falla</h4>
-        <small class="text-secondary">El área reporta la incidencia para que el Administrador la visualice, la verifique y emita la Ficha hacia el Área Técnica</small>
+
+<div class="mb-3">
+    <h4 class="fw-bold mb-0">Paso 1: Reporte de Falla o Solicitud de Mantenimiento</h4>
+    <div class="small text-muted">
+        <?= $scope ? h("Mostrando exclusivamente equipos y solicitudes del área {$scope}.") : 'Registro institucional de incidencias técnicas para verificación administrativa.' ?>
     </div>
-    <a href="../admin/verificacion_admin.php" class="btn btn-primary btn-sm fw-bold">Ir al Paso 2: Verificación del Administrador →</a>
 </div>
 
 <?php if ($msg): ?>
-    <div class="alert alert-success py-2 small">
-        <i class="fa-solid fa-circle-check me-1"></i> <?= htmlspecialchars($msg) ?>
-        <a href="../admin/verificacion_admin.php" class="btn btn-sm btn-dark ms-2 py-0">Ir ahora a Verificar y Emitir Ficha →</a>
-    </div>
+    <div class="alert alert-success alert-dismissible fade show py-2 small"><?= h($msg) ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+<?php endif; ?>
+<?php if ($err): ?>
+    <div class="alert alert-danger alert-dismissible fade show py-2 small"><?= h($err) ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
 <?php endif; ?>
 
-<div class="row g-3">
-    <div class="col-md-5">
-        <form method="POST" class="card p-3 shadow-sm border-warning">
-            <h6 class="fw-bold text-dark border-bottom pb-2 mb-3">Registrar Nuevo Reporte de Falla desde el Área</h6>
-            <div class="mb-2 small">
-                <label class="form-label fw-bold">1. Seleccionar Bien del Inventario (APSTI / Cafetín / Áreas) *</label>
-                <select name="bien_id" class="form-select form-select-sm" required>
-                    <?php foreach ($bienes as $b): ?>
-                        <option value="<?= (int)$b['id'] ?>" <?= ((int)$b['id'] === $preBienId)?'selected':'' ?>>
-                            [<?= htmlspecialchars($b['codigo_apsti']) ?>] <?= htmlspecialchars($b['denominacion'] . ' ' . $b['marca'] . ' — ' . $b['area_ambiente']) ?>
-                        </option>
-                    <?php endforeach; ?>
-                </select>
-            </div>
-            <div class="mb-2 small">
-                <label class="form-label fw-bold">2. Descripción Detallada de la Falla u Observación *</label>
-                <textarea name="falla_reportada" class="form-control form-control-sm" rows="3" required placeholder="Ej. El equipo presenta desconexiones de red en sesión de laboratorio o no enciende el estabilizador."></textarea>
-            </div>
-            <div class="mb-3 small">
-                <label class="form-label fw-bold">3. Nivel de Prioridad</label>
-                <select name="prioridad" class="form-select form-select-sm">
-                    <option value="ALTA">ALTA (Atención en Laboratorio)</option>
-                    <option value="CRITICA">CRÍTICA (Equipo Inoperativo)</option>
-                    <option value="MEDIA">MEDIA (Preventivo Programado)</option>
-                </select>
-            </div>
-            <button class="btn btn-warning fw-bold w-100" type="submit"><i class="fa-solid fa-paper-plane me-1"></i> Enviar Reporte al Administrador</button>
-        </form>
-    </div>
+<div class="card-clean p-3 p-md-4 mb-4">
+    <h6 class="fw-bold mb-3"><i class="fa-solid fa-triangle-exclamation text-warning me-2"></i>Nueva Solicitud de Mantenimiento</h6>
+    <form method="POST" enctype="multipart/form-data" class="row g-3">
+        <?= csrf_field() ?>
+        <div class="col-md-6">
+            <label class="form-label small fw-semibold">Equipo Patrimonial <span class="text-danger">*</span></label>
+            <select name="bien_id" class="form-select" required>
+                <option value="">-- Seleccione un equipo --</option>
+                <?php foreach ($equipos as $e): ?>
+                    <option value="<?= (int)$e['id'] ?>">
+                        <?= h($e['codigo_apsti']) ?> — <?= h($e['denominacion']) ?> (<?= h($e['area_ambiente']) ?>)
+                    </option>
+                <?php endforeach; ?>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small fw-semibold">Prioridad <span class="text-danger">*</span></label>
+            <select name="prioridad" class="form-select" required>
+                <option value="ALTA">Alta (Urgente)</option>
+                <option value="MEDIA">Media (Programable)</option>
+                <option value="BAJA">Baja (Preventivo)</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label small fw-semibold">Foto Evidencia (Opcional, máx. 3 MB)</label>
+            <input type="file" name="foto_falla" class="form-control" accept="image/jpeg,image/png,image/webp">
+        </div>
+        <div class="col-12">
+            <label class="form-label small fw-semibold">Descripción detallada de la falla <span class="text-danger">*</span></label>
+            <textarea name="falla_reportada" rows="2" class="form-control" placeholder="Describe el problema observado en el equipo..." required></textarea>
+        </div>
+        <div class="col-12 d-flex justify-content-end">
+            <button type="submit" class="btn btn-emerald px-4">
+                <i class="fa-solid fa-paper-plane me-1"></i>Enviar Solicitud a Administración
+            </button>
+        </div>
+    </form>
+</div>
 
-    <div class="col-md-7">
-        <div class="card p-3 shadow-sm h-100">
-            <h6 class="fw-bold mb-2">Historial de Fallas Reportadas y Estado de Verificación</h6>
-            <div class="table-responsive">
-                <table class="table table-sm table-bordered align-middle small mb-0">
-                    <thead class="table-dark">
-                        <tr><th>Código</th><th>Bien / Equipo</th><th>Falla Reportada</th><th>Estado Flujo</th><th>Ficha Emitida</th></tr>
-                    </thead>
-                    <tbody>
-                    <?php foreach ($misReportes as $r): ?>
+<div class="card-clean p-3">
+    <h6 class="fw-bold mb-3">Historial de Solicitudes <?= $scope ? h("— Área {$scope}") : 'Registradas' ?></h6>
+    <div class="table-responsive">
+        <table class="table table-hover align-middle small mb-0">
+            <thead>
+                <tr>
+                    <th class="nowrap-col">Solicitud</th>
+                    <th>Equipo</th>
+                    <th>Falla Reportada</th>
+                    <th class="nowrap-col">Fecha Reporte</th>
+                    <th class="nowrap-col">Etapa Actual</th>
+                    <th class="nowrap-col">N.º Ficha</th>
+                    <th class="nowrap-col text-end">Documento</th>
+                </tr>
+            </thead>
+            <tbody>
+                <?php if (empty($historial)): ?>
+                    <tr><td colspan="7" class="text-center text-muted py-4">No existen solicitudes registradas aún.</td></tr>
+                <?php else: ?>
+                    <?php foreach ($historial as $s):
+                        $etapa = (string)($s['estado_flujo'] ?? '1_REPORTADO_AREA');
+                        $badgeEtapa = match ($etapa) {
+                            '1_REPORTADO_AREA' => '<span class="badge bg-warning text-dark">Paso 1: Reportado por Área</span>',
+                            '2_VERIFICADO_CON_FICHA' => '<span class="badge bg-info text-dark">Paso 2: Verificado (Con Ficha)</span>',
+                            '3_ATENDIDO_AREA_TECNICA' => '<span class="badge bg-success">Paso 3: Atendido y Cerrado</span>',
+                            default => '<span class="badge bg-secondary">En proceso</span>',
+                        };
+                        $ficha = trim((string)($s['numero_ficha'] ?? ''));
+                    ?>
                         <tr>
-                            <td class="fw-bold"><?= htmlspecialchars($r['codigo_solicitud']) ?></td>
-                            <td class="fw-bold text-primary"><?= htmlspecialchars($r['codigo_bien']) ?></td>
-                            <td><?= htmlspecialchars($r['falla_reportada']) ?></td>
-                            <td><span class="badge <?= $r['verificado_admin']?'bg-success':'bg-warning text-dark' ?>"><?= htmlspecialchars($r['estado_flujo']) ?></span></td>
+                            <td class="nowrap-col fw-bold"><?= h($s['codigo_solicitud']) ?></td>
                             <td>
-                                <?php if ($r['numero_ficha']): ?>
-                                    <a href="../admin/ficha_mantenimiento.php?sol_id=<?= (int)$r['id'] ?>" class="badge bg-danger text-decoration-none"><?= htmlspecialchars($r['numero_ficha']) ?></a>
+                                <div class="fw-bold text-primary"><?= h($s['codigo_bien']) ?></div>
+                                <div class="text-muted" style="font-size:.75rem;"><?= h($s['descripcion_bien']) ?></div>
+                            </td>
+                            <td>
+                                <?= h($s['falla_reportada']) ?>
+                                <?php if (!empty($s['foto_falla'])): ?>
+                                    <div class="mt-1"><a href="<?= h(baseUrl((string)$s['foto_falla'])) ?>" target="_blank" class="badge bg-light text-primary border text-decoration-none"><i class="fa-solid fa-image me-1"></i>Ver evidencia</a></div>
+                                <?php endif; ?>
+                            </td>
+                            <td class="nowrap-col"><?= h(fmt_fecha_hora($s['fecha_reporte'] ?? null)) ?></td>
+                            <td class="nowrap-col"><?= $badgeEtapa ?></td>
+                            <td class="nowrap-col">
+                                <?= $ficha !== '' ? '<span class="fw-bold text-danger">' . h($ficha) . '</span>' : '<span class="text-muted fst-italic">Pendiente</span>' ?>
+                            </td>
+                            <td class="nowrap-col text-end">
+                                <?php if ($ficha !== '' && $etapa !== '1_REPORTADO_AREA'): ?>
+                                    <a href="<?= h(baseUrl('admin/ficha_mantenimiento.php?sol_id=' . (int)$s['id'])) ?>" target="_blank" class="btn btn-sm btn-outline-success">
+                                        <i class="fa-solid fa-file-pdf me-1"></i>Ver Ficha
+                                    </a>
                                 <?php else: ?>
-                                    <span class="text-muted">Pendiente Admin</span>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Pendiente de verificación administrativa">
+                                        <i class="fa-solid fa-lock"></i>
+                                    </button>
                                 <?php endif; ?>
                             </td>
                         </tr>
                     <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        </div>
+                <?php endif; ?>
+            </tbody>
+        </table>
     </div>
 </div>
+
 <?php renderFooter(); ?>

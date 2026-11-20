@@ -3,6 +3,7 @@ declare(strict_types=1);
 if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
+require_once __DIR__ . '/auth.php';
 $cfg = require dirname(__DIR__) . '/config/config.php';
 date_default_timezone_set($cfg['app']['zona_horaria']);
 
@@ -74,6 +75,12 @@ class LocalJsonPDO {
             $this->data = $parsed;
         }
     }
+
+    public function beginTransaction(): bool { return true; }
+    public function commit(): bool { $this->save(); return true; }
+    public function rollBack(): bool { return true; }
+    public function inTransaction(): bool { return false; }
+    public function lastInsertId(): string { return '1'; }
 
     public function save(): void {
         @file_put_contents($this->jsonFile, json_encode($this->data, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
@@ -423,6 +430,85 @@ function instalarBaseDeDatosDesdeCero(PDO $pdoServer, string $dbName): void {
     $_SESSION['db_schema_ok'] = true;
 }
 
+
+function ensureHardenedSchema(PDO $pdo): void {
+    if (!empty($_SESSION['hardened_schema_checked'])) {
+        return;
+    }
+    try {
+        // 1. Asegurar columna activo y longitud de hash bcrypt en usuarios
+        $colsU = $pdo->query("SHOW COLUMNS FROM usuarios")->fetchAll(PDO::FETCH_COLUMN);
+        if (is_array($colsU) && !in_array('activo', $colsU, true)) {
+            $pdo->exec("ALTER TABLE usuarios ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1");
+        }
+        try {
+            $pdo->exec("ALTER TABLE usuarios MODIFY COLUMN clave VARCHAR(255) NOT NULL");
+        } catch (Throwable $e) {}
+
+        // Convertir cualquier contraseña en texto plano a bcrypt sin perder cuentas
+        $us = $pdo->query("SELECT id, clave FROM usuarios")->fetchAll();
+        foreach ($us as $rowU) {
+            $cl = (string)($rowU['clave'] ?? '');
+            $info = password_get_info($cl);
+            if (($info['algo'] ?? 0) === 0 || ($info['algo'] ?? null) === null) {
+                $hash = password_hash($cl, PASSWORD_DEFAULT);
+                $st = $pdo->prepare("UPDATE usuarios SET clave = ? WHERE id = ?");
+                $st->execute([$hash, (int)$rowU['id']]);
+            }
+        }
+
+        // 2. Columnas P2 en solicitudes_mantenimiento
+        $colsS = $pdo->query("SHOW COLUMNS FROM solicitudes_mantenimiento")->fetchAll(PDO::FETCH_COLUMN);
+        $addCols = [
+            'tipo_mantenimiento' => "VARCHAR(30) DEFAULT 'CORRECTIVO'",
+            'repuestos_usados'   => "TEXT NULL",
+            'costo_estimado'     => "DECIMAL(10,2) DEFAULT 0.00",
+            'horas_tecnicas'     => "DECIMAL(5,2) DEFAULT 0.00",
+            'foto_falla'         => "VARCHAR(255) NULL",
+            'foto_cierre'        => "VARCHAR(255) NULL",
+        ];
+        foreach ($addCols as $cName => $cDef) {
+            if (is_array($colsS) && !in_array($cName, $colsS, true)) {
+                $pdo->exec("ALTER TABLE solicitudes_mantenimiento ADD COLUMN {$cName} {$cDef}");
+            }
+        }
+
+        // 3. Tablas P2 (movimientos_bienes y auditoria_logs)
+        $pdo->exec("CREATE TABLE IF NOT EXISTS movimientos_bienes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            codigo_acta VARCHAR(40) NOT NULL,
+            bien_id INT NOT NULL,
+            codigo_bien VARCHAR(60) NOT NULL,
+            descripcion_bien VARCHAR(160) NOT NULL,
+            tipo_movimiento VARCHAR(30) NOT NULL DEFAULT 'TRASLADO',
+            area_origen VARCHAR(120) NOT NULL,
+            area_destino VARCHAR(120) NOT NULL,
+            responsable_entrega VARCHAR(120) NOT NULL,
+            responsable_recibe VARCHAR(120) NOT NULL,
+            fecha_movimiento DATE NOT NULL,
+            motivo TEXT NOT NULL,
+            estado_movimiento VARCHAR(30) NOT NULL DEFAULT 'EJECUTADO',
+            creado_en DATETIME DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $pdo->exec("CREATE TABLE IF NOT EXISTS auditoria_logs (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            usuario_id INT NOT NULL DEFAULT 0,
+            rol VARCHAR(40) NOT NULL,
+            accion VARCHAR(60) NOT NULL,
+            tabla_afectada VARCHAR(60) NOT NULL,
+            registro_id VARCHAR(60) NULL,
+            detalle TEXT NULL,
+            fecha_hora DATETIME NOT NULL,
+            ip VARCHAR(64) NOT NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+        $_SESSION['hardened_schema_checked'] = true;
+    } catch (Throwable $ex) {
+        // En SQLite o si ya está actualizado, no bloquea
+    }
+}
+
 function crearConexionPDO(array $dbCfg, int $timeoutSec = 2, bool $isCloud = false): PDO {
     $dsn = sprintf('mysql:host=%s;port=%d;charset=%s', $dbCfg['host'], (int)$dbCfg['puerto'], $dbCfg['charset']);
     $pdoOpts = [
@@ -454,7 +540,8 @@ function getPDO(bool $forceReinstall = false, string $forceTarget = 'auto') {
     if ($pdo !== null && !$forceReinstall && $forceTarget === 'auto') {
         return $pdo;
     }
-    $cfg = require dirname(__DIR__) . '/config/config.php';
+    require_once __DIR__ . '/auth.php';
+$cfg = require dirname(__DIR__) . '/config/config.php';
 
     // Si está desplegado en Render (nube) o se pidió explícitamente probar TiDB Cloud:
     if ($forceTarget === 'tidb' || getenv('RENDER') || getenv('DB_HOST')) {
@@ -478,6 +565,7 @@ function getPDO(bool $forceReinstall = false, string $forceTarget = 'auto') {
                     instalarBaseDeDatosDesdeCero($pdoCloud, $dbCloud['nombre']);
                 }
             }
+            ensureHardenedSchema($pdoCloud);
             $_SESSION['db_mode_label'] = 'TiDB Cloud Serverless (Conectado en la Nube)';
             return $pdo = $pdoCloud;
         } catch (Throwable $cloudEx) {
@@ -509,6 +597,7 @@ function getPDO(bool $forceReinstall = false, string $forceTarget = 'auto') {
                     instalarBaseDeDatosDesdeCero($pdoLocal, $dbLocal['nombre']);
                 }
             }
+            ensureHardenedSchema($pdoLocal);
             $_SESSION['db_mode_label'] = 'MySQL Local XAMPP (127.0.0.1:3306)';
             return $pdo = $pdoLocal;
         } catch (Throwable $mysqlEx) {
@@ -539,17 +628,14 @@ function getPDO(bool $forceReinstall = false, string $forceTarget = 'auto') {
 }
 
 function baseUrl(string $path = ''): string {
-    $cfg = require dirname(__DIR__) . '/config/config.php';
+    require_once __DIR__ . '/auth.php';
+$cfg = require dirname(__DIR__) . '/config/config.php';
     $b = rtrim($cfg['app']['base_url'], '/');
     return $b . '/' . ltrim($path, '/');
 }
 
 function requireLogin(): array {
-    if (empty($_SESSION['usuario'])) {
-        header('Location: ' . baseUrl('login.php'));
-        exit;
-    }
-    return $_SESSION['usuario'];
+    return require_login();
 }
 
 function exportarTablaXLS(string $filename, string $tituloReporte, array $headers, array $rows): void {

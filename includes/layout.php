@@ -1,275 +1,420 @@
 <?php
+declare(strict_types=1);
+
+require_once __DIR__ . '/auth.php';
+
 function calcularSemaforo(string $fechaLimite, int $requiereMant = 1): array {
-    if (!$requiereMant) {
-        return ['texto' => 'No requiere (Mobiliario)', 'clase' => 'bg-secondary'];
+    if ($requiereMant === 0 || trim($fechaLimite) === '' || $fechaLimite === '0000-00-00') {
+        return ['clase' => 'secondary', 'texto' => 'No Aplica', 'icono' => 'fa-minus-circle'];
     }
-    $hoy = new DateTimeImmutable(date('Y-m-d'));
-    $lim = DateTimeImmutable::createFromFormat('Y-m-d', $fechaLimite) ?: $hoy;
-    $diff = (int)$hoy->diff($lim)->format('%r%a');
-    if ($diff < 0) {
-        return ['texto' => $fechaLimite . ' (Vencido)', 'clase' => 'bg-danger'];
-    } elseif ($diff <= 15) {
-        return ['texto' => $fechaLimite . ' (Por vencer)', 'clase' => 'bg-warning text-dark'];
+    try {
+        $hoy = new DateTimeImmutable('today');
+        $limite = new DateTimeImmutable($fechaLimite);
+        $diff = (int)$hoy->diff($limite)->format('%r%a');
+        if ($diff < 0) {
+            return ['clase' => 'danger', 'texto' => 'Vencido (' . abs($diff) . ' d)', 'icono' => 'fa-exclamation-triangle'];
+        }
+        if ($diff <= 15) {
+            return ['clase' => 'warning text-dark', 'texto' => 'Próximo (' . $diff . ' d)', 'icono' => 'fa-clock'];
+        }
+        return ['clase' => 'success', 'texto' => 'Vigente (' . $diff . ' d)', 'icono' => 'fa-check-circle'];
+    } catch (Throwable $e) {
+        return ['clase' => 'secondary', 'texto' => 'Sin fecha', 'icono' => 'fa-calendar'];
     }
-    return ['texto' => $fechaLimite . ' (En regla)', 'clase' => 'bg-success'];
 }
 
 function renderHeader(string $titulo, string $activeMenu = 'inicio'): void {
-    $u = $_SESSION['usuario'] ?? ['nombres' => 'Lic. Ernesto Correa Barrantes (Admin)', 'rol' => 'admin', 'programa' => 'TODOS'];
-    $dbMode = $_SESSION['db_mode_label'] ?? 'MySQL Conectado';
+    $u = require_login();
+    $rol = get_user_role($u);
+    $scope = get_user_program_scope($u);
+    $nombreUsuario = (string)($u['nombres'] ?? 'Usuario');
+    $programaLabel = $scope ? $scope : ($rol === 'tecnico' ? 'SOPORTE' : 'TODOS');
+
+    // Construir menú estrictamente según matriz RBAC
+    $menuSections = [];
+
+    if ($rol === 'admin') {
+        $menuSections[] = [
+            'label' => 'PRINCIPAL',
+            'items' => [
+                ['id' => 'inicio', 'label' => 'Panel Principal', 'icon' => 'fa-gauge-high', 'href' => baseUrl('admin/index.php')],
+            ],
+        ];
+        $menuSections[] = [
+            'label' => 'INVENTARIO Y BIENES',
+            'items' => [
+                ['id' => 'equipos', 'label' => 'Inventario Activo (BD)', 'icon' => 'fa-boxes-stacked', 'href' => baseUrl('admin/equipos.php')],
+                ['id' => 'inv_apsti', 'label' => 'Inventariar APSTI', 'icon' => 'fa-desktop', 'href' => baseUrl('admin/inventariar_apsti.php')],
+                ['id' => 'cafetin', 'label' => 'Módulo Cafetín', 'icon' => 'fa-mug-hot', 'href' => baseUrl('admin/cafetin.php')],
+                ['id' => 'buscar', 'label' => 'Buscar por Código/Serie', 'icon' => 'fa-magnifying-glass', 'href' => baseUrl('admin/buscar_equipo.php')],
+                ['id' => 'movimientos', 'label' => 'Traslados y Préstamos', 'icon' => 'fa-right-left', 'href' => baseUrl('admin/movimientos.php')],
+            ],
+        ];
+        $menuSections[] = [
+            'label' => 'FLUJO DE MANTENIMIENTO',
+            'items' => [
+                ['id' => 'reportar', 'label' => 'Paso 1: Reportar Falla', 'icon' => 'fa-triangle-exclamation', 'href' => baseUrl('docente/reportar.php')],
+                ['id' => 'verificar', 'label' => 'Paso 2: Verificar + Ficha', 'icon' => 'fa-clipboard-check', 'href' => baseUrl('admin/verificacion_admin.php')],
+                ['id' => 'tecnico', 'label' => 'Paso 3: Área Técnica', 'icon' => 'fa-screwdriver-wrench', 'href' => baseUrl('tecnico/trabajos.php')],
+                ['id' => 'cronograma', 'label' => 'Cronograma Preventivo', 'icon' => 'fa-calendar-days', 'href' => baseUrl('admin/cronograma.php')],
+                ['id' => 'reportes', 'label' => 'Reportes (PDF / Excel)', 'icon' => 'fa-chart-pie', 'href' => baseUrl('admin/reportes.php')],
+            ],
+        ];
+        $menuSections[] = [
+            'label' => 'SEGURIDAD Y AUDITORÍA',
+            'items' => [
+                ['id' => 'usuarios', 'label' => 'Gestión de Usuarios', 'icon' => 'fa-users-gear', 'href' => baseUrl('admin/usuarios.php')],
+                ['id' => 'auditoria', 'label' => 'Bitácora de Auditoría', 'icon' => 'fa-shield-halved', 'href' => baseUrl('admin/auditoria.php')],
+            ],
+        ];
+    } elseif ($rol === 'coordinador_apsti') {
+        $menuSections[] = [
+            'label' => 'MI ÁREA · APSTI',
+            'items' => [
+                ['id' => 'inicio', 'label' => 'Panel APSTI', 'icon' => 'fa-gauge-high', 'href' => baseUrl('admin/index.php')],
+                ['id' => 'equipos', 'label' => 'Inventario APSTI', 'icon' => 'fa-boxes-stacked', 'href' => baseUrl('admin/equipos.php')],
+                ['id' => 'inv_apsti', 'label' => 'Inventariar APSTI', 'icon' => 'fa-desktop', 'href' => baseUrl('admin/inventariar_apsti.php')],
+                ['id' => 'buscar', 'label' => 'Buscar Equipo APSTI', 'icon' => 'fa-magnifying-glass', 'href' => baseUrl('admin/buscar_equipo.php')],
+            ],
+        ];
+        $menuSections[] = [
+            'label' => 'SOLICITUDES Y REPORTES',
+            'items' => [
+                ['id' => 'reportar', 'label' => 'Reportar Falla (Paso 1)', 'icon' => 'fa-triangle-exclamation', 'href' => baseUrl('docente/reportar.php')],
+                ['id' => 'cronograma', 'label' => 'Cronograma APSTI', 'icon' => 'fa-calendar-days', 'href' => baseUrl('admin/cronograma.php')],
+                ['id' => 'reportes', 'label' => 'Reportes APSTI', 'icon' => 'fa-chart-pie', 'href' => baseUrl('admin/reportes.php')],
+            ],
+        ];
+    } elseif (in_array($rol, ['coordinador_cont', 'coordinador_enfe', 'coordinador_agro'], true)) {
+        $areaNombre = match ($scope) {
+            'CONT' => 'Contabilidad',
+            'ENFE' => 'Enfermería',
+            'AGRO' => 'Prod. Agropecuaria',
+            default => (string)$scope,
+        };
+        $menuSections[] = [
+            'label' => 'MI ÁREA · ' . strtoupper($areaNombre),
+            'items' => [
+                ['id' => 'inicio', 'label' => 'Panel ' . $areaNombre, 'icon' => 'fa-gauge-high', 'href' => baseUrl('admin/index.php')],
+                ['id' => 'equipos', 'label' => 'Inventario ' . $areaNombre, 'icon' => 'fa-boxes-stacked', 'href' => baseUrl('admin/equipos.php')],
+                ['id' => 'buscar', 'label' => 'Buscar Equipo', 'icon' => 'fa-magnifying-glass', 'href' => baseUrl('admin/buscar_equipo.php')],
+            ],
+        ];
+        $menuSections[] = [
+            'label' => 'SOLICITUDES Y REPORTES',
+            'items' => [
+                ['id' => 'reportar', 'label' => 'Reportar Falla (Paso 1)', 'icon' => 'fa-triangle-exclamation', 'href' => baseUrl('docente/reportar.php')],
+                ['id' => 'cronograma', 'label' => 'Cronograma ' . $areaNombre, 'icon' => 'fa-calendar-days', 'href' => baseUrl('admin/cronograma.php')],
+                ['id' => 'reportes', 'label' => 'Reportes ' . $areaNombre, 'icon' => 'fa-chart-pie', 'href' => baseUrl('admin/reportes.php')],
+            ],
+        ];
+    } elseif ($rol === 'tecnico') {
+        $menuSections[] = [
+            'label' => 'ÁREA TÉCNICA',
+            'items' => [
+                ['id' => 'tecnico', 'label' => 'Órdenes Técnicas (Paso 3)', 'icon' => 'fa-screwdriver-wrench', 'href' => baseUrl('tecnico/trabajos.php')],
+                ['id' => 'buscar', 'label' => 'Buscar / Consultar Equipo', 'icon' => 'fa-magnifying-glass', 'href' => baseUrl('admin/buscar_equipo.php')],
+                ['id' => 'cronograma', 'label' => 'Cronograma Preventivo', 'icon' => 'fa-calendar-days', 'href' => baseUrl('admin/cronograma.php')],
+            ],
+        ];
+    }
     ?>
 <!DOCTYPE html>
-<html lang="es" data-theme="light">
+<html lang="es">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= htmlspecialchars($titulo) ?> — SoporteTécnico UTCUBAMBA</title>
+    <title><?= h($titulo) ?> — SoporteTécnico UTCUBAMBA</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css" rel="stylesheet">
     <style>
-        /* Paleta Institucional Ergonómica (baja fatiga visual para uso prolongado diario) */
         :root {
-            --sidebar-bg: #162235;
-            --sidebar-hover: #243754;
-            --sidebar-active: #2c4b78;
-            --bg-main: #f4f6f9;
-            --bg-card: #ffffff;
-            --bg-subtle: #f8fafc;
-            --text-main: #1e293b;
+            --petrol: #0f3b3c;
+            --petrol-dark: #0a2829;
+            --emerald: #10b981;
+            --emerald-dark: #059669;
+            --canvas: #f3f6f8;
+            --surface: #ffffff;
+            --border-soft: #e2e8f0;
+            --text-main: #0f172a;
             --text-muted: #64748b;
-            --border-col: #e2e8f0;
-            --accent-navy: #274c77;
-            --accent-navy-hover: #1d3a5c;
-        }
-        html[data-theme="dark"] {
-            --bg-main: #0f172a;
-            --bg-card: #182334;
-            --bg-subtle: #1e2c42;
-            --text-main: #e2e8f0;
-            --text-muted: #94a3b8;
-            --border-col: #2b3b52;
         }
         body {
-            background-color: var(--bg-main);
+            background: var(--canvas);
             color: var(--text-main);
             font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            font-size: 0.92rem;
-            transition: background-color 0.2s, color 0.2s;
+            min-height: 100vh;
+            margin: 0;
         }
-        .sidebar {
-            width: 258px; min-height: 100vh;
-            background: var(--sidebar-bg);
-            color: #e2e8f0; position: fixed; top: 0; left: 0; z-index: 1000; overflow-y: auto;
-            border-right: 1px solid rgba(255,255,255,0.06);
+        .app-shell { display: flex; min-height: 100vh; }
+        .app-sidebar {
+            width: 262px;
+            flex-shrink: 0;
+            background: linear-gradient(180deg, var(--petrol) 0%, var(--petrol-dark) 100%);
+            color: #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            border-right: 3px solid var(--emerald);
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
         }
-        .main-content { margin-left: 258px; padding: 18px 26px; min-height: 100vh; }
-        .top-utility-bar {
-            background: var(--bg-card); border: 1px solid var(--border-col);
-            border-radius: 10px; padding: 9px 16px; margin-bottom: 18px;
-            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+        .sidebar-brand {
+            padding: 18px 16px;
+            border-bottom: 1px solid rgba(255,255,255,.1);
+            display: flex;
+            align-items: center;
+            gap: 11px;
         }
-        .card {
-            background-color: var(--bg-card) !important;
-            color: var(--text-main) !important;
-            border: 1px solid var(--border-col) !important;
+        .sidebar-brand img {
+            width: 40px; height: 40px; border-radius: 9px;
+            background: #fff; padding: 3px; object-fit: contain;
+        }
+        .sidebar-user {
+            margin: 12px 14px 6px;
+            padding: 10px 12px;
             border-radius: 10px;
-            box-shadow: 0 1px 3px rgba(15,23,42,0.04) !important;
+            background: rgba(255,255,255,.07);
+            border: 1px solid rgba(16,185,129,.22);
         }
-
-        /* Suavizado ergonómico de botones Bootstrap (adiós colores neón/chillones) */
-        .btn-primary { background-color: #274c77 !important; border-color: #274c77 !important; color: #fff !important; }
-        .btn-primary:hover { background-color: #1d3a5c !important; border-color: #1d3a5c !important; }
-        .btn-outline-primary { color: #274c77 !important; border-color: #cbd5e1 !important; background: transparent; }
-        .btn-outline-primary:hover { background-color: #edf2f7 !important; color: #1d3a5c !important; border-color: #94a3b8 !important; }
-
-        .btn-success { background-color: #2d6a4f !important; border-color: #2d6a4f !important; color: #fff !important; }
-        .btn-success:hover { background-color: #21523c !important; }
-        .btn-outline-success { color: #2d6a4f !important; border-color: #cbd5e1 !important; }
-        .btn-outline-success:hover { background-color: #ecfdf5 !important; color: #1b4332 !important; }
-
-        .btn-warning { background-color: #f3e8d2 !important; border-color: #d9b878 !important; color: #5c4014 !important; }
-        .btn-warning:hover { background-color: #ead7b2 !important; color: #422c0c !important; }
-        .btn-outline-warning { color: #7c581d !important; border-color: #cbd5e1 !important; }
-        .btn-outline-warning:hover { background-color: #fef9ee !important; }
-
-        .btn-info { background-color: #e0edf7 !important; border-color: #b4cfe4 !important; color: #1d4466 !important; }
-        .btn-info:hover { background-color: #cde2f2 !important; color: #132f48 !important; }
-        .btn-outline-info { color: #274c77 !important; border-color: #cbd5e1 !important; }
-        .btn-outline-info:hover { background-color: #eef4fa !important; }
-
-        .btn-danger { background-color: #9b2c2c !important; border-color: #9b2c2c !important; color: #fff !important; }
-        .btn-danger:hover { background-color: #7f2222 !important; }
-        .btn-outline-danger { color: #9b2c2c !important; border-color: #e2c5c5 !important; }
-        .btn-outline-danger:hover { background-color: #fef2f2 !important; }
-
-        .btn-dark { background-color: #334155 !important; border-color: #334155 !important; color: #fff !important; }
-        .btn-dark:hover { background-color: #1e293b !important; }
-
-        /* Suavizado de colores de texto y bordes KPI */
-        .text-primary { color: #274c77 !important; }
-        .text-info { color: #3b6b94 !important; }
-        .text-warning { color: #9a6715 !important; }
-        .text-success { color: #2d6a4f !important; }
-        .text-danger { color: #9b2c2c !important; }
-        .border-primary { border-color: #274c77 !important; }
-        .border-info { border-color: #4a7c9b !important; }
-        .border-warning { border-color: #b78938 !important; }
-        .border-success { border-color: #2d6a4f !important; }
-
-        /* Badges en tonos pastel suaves (mucho más descansados de leer) */
-        .badge { font-weight: 600; padding: 0.42em 0.72em; border-radius: 6px; letter-spacing: 0.01em; }
-        .badge.bg-primary { background-color: #e2ecf7 !important; color: #1e3f66 !important; border: 1px solid #c3d7ec; }
-        .badge.bg-success { background-color: #e2f2ea !important; color: #1b4d37 !important; border: 1px solid #b9dfc9; }
-        .badge.bg-warning { background-color: #fbf1da !important; color: #6e4b10 !important; border: 1px solid #e9d29d; }
-        .badge.bg-danger  { background-color: #fae6e6 !important; color: #822222 !important; border: 1px solid #e8bdbd; }
-        .badge.bg-secondary { background-color: #edf1f5 !important; color: #475569 !important; border: 1px solid #d5dde6; }
-        .badge.bg-dark { background-color: #334155 !important; color: #f8fafc !important; }
-
-        /* Cabeceras de tabla sobrias (pizarra en vez de negro puro) */
-        .table-dark {
-            --bs-table-bg: #24344d !important;
-            --bs-table-color: #f1f5f9 !important;
-            --bs-table-border-color: #334663 !important;
+        .sidebar-section-label {
+            font-size: .68rem;
+            font-weight: 700;
+            letter-spacing: .08em;
+            color: rgba(167,243,208,.75);
+            padding: 12px 16px 4px;
+            text-transform: uppercase;
         }
-        .table { border-color: var(--border-col) !important; }
+        .sidebar-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 2px 10px;
+            padding: 9px 12px;
+            border-radius: 9px;
+            color: #cbd5e1;
+            text-decoration: none;
+            font-size: .88rem;
+            font-weight: 500;
+            transition: all .15s ease;
+        }
+        .sidebar-link i { width: 18px; text-align: center; font-size: .9rem; }
+        .sidebar-link:hover { background: rgba(255,255,255,.1); color: #fff; }
+        .sidebar-link.active {
+            background: linear-gradient(90deg, var(--emerald-dark), var(--emerald));
+            color: #fff;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(16,185,129,.28);
+        }
+        .app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .app-topbar {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border-soft);
+            padding: 10px 22px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            position: sticky;
+            top: 0;
+            z-index: 1020;
+        }
+        .app-content { padding: 22px; flex: 1; }
+        .card-clean {
+            background: var(--surface);
+            border: 1px solid var(--border-soft);
+            border-radius: 14px;
+            box-shadow: 0 2px 10px rgba(15,23,42,.04);
+        }
+        .kpi-card {
+            background: var(--surface);
+            border: 1px solid var(--border-soft);
+            border-left: 4px solid var(--emerald);
+            border-radius: 13px;
+            padding: 16px 18px;
+            box-shadow: 0 2px 8px rgba(15,23,42,.04);
+            height: 100%;
+        }
+        .table thead th {
+            background: var(--petrol);
+            color: #fff;
+            font-size: .8rem;
+            font-weight: 600;
+            border: none;
+            vertical-align: middle;
+        }
+        .nowrap-col { white-space: nowrap !important; }
+        .btn-petrol { background: var(--petrol); color: #fff; border: none; }
+        .btn-petrol:hover { background: var(--petrol-dark); color: #fff; }
+        .btn-emerald { background: var(--emerald-dark); color: #fff; border: none; }
+        .btn-emerald:hover { background: #047857; color: #fff; }
 
-        /* Ajustes Modo Oscuro descansado */
-        html[data-theme="dark"] .table { color: #dbe4f0 !important; border-color: #2b3b52 !important; }
-        html[data-theme="dark"] .table-light, html[data-theme="dark"] .bg-light { background-color: #203047 !important; color: #e2e8f0 !important; }
-        html[data-theme="dark"] .form-control, html[data-theme="dark"] .form-select {
-            background-color: #101a2c !important; border-color: #31445e !important; color: #e2e8f0 !important;
+        /* Modo Oscuro completo y legible */
+        body.dark-mode {
+            --canvas: #0b161c;
+            --surface: #13222b;
+            --border-soft: #223845;
+            --text-main: #e2e8f0;
+            --text-muted: #94a3b8;
+            background: var(--canvas);
+            color: var(--text-main);
         }
-        html[data-theme="dark"] .modal-content { background-color: #182334 !important; color: #e2e8f0 !important; border: 1px solid #2b3b52 !important; }
-        html[data-theme="dark"] .text-secondary, html[data-theme="dark"] .text-muted { color: #94a3b8 !important; }
-        html[data-theme="dark"] .text-primary { color: #7db0e8 !important; }
-        html[data-theme="dark"] .text-info { color: #7dc4e4 !important; }
-        html[data-theme="dark"] .text-warning { color: #e5b567 !important; }
-        html[data-theme="dark"] .text-success { color: #68b892 !important; }
-        html[data-theme="dark"] .btn-outline-primary,
-        html[data-theme="dark"] .btn-outline-info,
-        html[data-theme="dark"] .btn-outline-warning,
-        html[data-theme="dark"] .btn-outline-success { color: #cbd5e1 !important; border-color: #3b4f6b !important; }
-
-        .nav-section { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; color: #8fa6c2; padding: 8px 16px 2px; font-weight: 700; }
-        .sidebar a.nav-link { color: #cbd5e1; padding: 6px 14px; border-radius: 7px; margin: 1px 10px; font-size: 0.83rem; display: flex; align-items: center; gap: 10px; text-decoration: none; transition: all 0.15s; }
-        .sidebar a.nav-link:hover { background: var(--sidebar-hover); color: #fff; }
-        .sidebar a.nav-link.active { background: var(--sidebar-active); color: #fff; font-weight: 600; }
-
-        .theme-toggle-btn {
-            border-radius: 8px; font-size: 0.79rem; font-weight: 600; padding: 5px 12px;
-            background: #eef2f6; color: #1e293b; border: 1px solid #cbd5e1; cursor: pointer;
-            display: inline-flex; align-items: center; gap: 6px;
+        body.dark-mode .app-topbar,
+        body.dark-mode .card,
+        body.dark-mode .card-clean,
+        body.dark-mode .kpi-card,
+        body.dark-mode .modal-content {
+            background-color: var(--surface) !important;
+            color: var(--text-main) !important;
+            border-color: var(--border-soft) !important;
         }
-        html[data-theme="dark"] .theme-toggle-btn {
-            background: #24344d; color: #e2e8f0; border-color: #3b4f6b;
+        body.dark-mode .bg-white,
+        body.dark-mode .bg-light {
+            background-color: #182b36 !important;
+            color: var(--text-main) !important;
         }
-        .print-only-header { display: none; }
-        @media (max-width: 991px) {
-            .sidebar { position: static; width: 100%; min-height: auto; }
-            .main-content { margin-left: 0; padding: 15px; }
+        body.dark-mode .text-dark,
+        body.dark-mode .text-body { color: #f1f5f9 !important; }
+        body.dark-mode .text-muted { color: #94a3b8 !important; }
+        body.dark-mode .table {
+            --bs-table-bg: #13222b;
+            --bs-table-color: #e2e8f0;
+            --bs-table-striped-bg: #172a35;
+            --bs-table-striped-color: #e2e8f0;
+            --bs-table-hover-bg: #1d3543;
+            --bs-table-hover-color: #ffffff;
+            --bs-table-border-color: #243b49;
+            color: #e2e8f0 !important;
         }
-        @media print {
-            .sidebar, .no-print, .top-utility-bar, .modal, .btn { display: none !important; }
-            .main-content { margin-left: 0 !important; padding: 0 !important; background: #fff !important; }
-            body { background: #fff !important; color: #000 !important; }
-            .print-only-header { display: flex !important; align-items: center; justify-content: space-between; border-bottom: 2px solid #1e293b; padding-bottom: 10px; margin-bottom: 15px; }
-            .card { border: 1px solid #94a3b8 !important; box-shadow: none !important; background: #fff !important; color: #000 !important; }
+        body.dark-mode .table tbody tr,
+        body.dark-mode .table tbody td {
+            background-color: #13222b !important;
+            color: #e2e8f0 !important;
+            border-color: #243b49 !important;
+        }
+        body.dark-mode .table-hover tbody tr:hover td {
+            background-color: #1c3340 !important;
+        }
+        body.dark-mode .form-control,
+        body.dark-mode .form-select,
+        body.dark-mode textarea {
+            background-color: #0e1b22 !important;
+            color: #f1f5f9 !important;
+            border-color: #2d4857 !important;
+        }
+        body.dark-mode .form-control::placeholder,
+        body.dark-mode textarea::placeholder { color: #64748b !important; }
+        body.dark-mode .btn-outline-secondary,
+        body.dark-mode .btn-outline-dark {
+            color: #cbd5e1 !important;
+            border-color: #3a5566 !important;
+        }
+        @media (max-width: 991.98px) {
+            .app-sidebar {
+                position: fixed; left: -270px; top: 0; bottom: 0; z-index: 1050;
+                transition: left .22s ease;
+            }
+            .app-sidebar.open { left: 0; }
         }
     </style>
-    <script>
-        (function() {
-            var savedTheme = localStorage.getItem('iestpu_theme') || 'light';
-            document.documentElement.setAttribute('data-theme', savedTheme);
-        })();
-        function toggleThemeMode() {
-            var cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-            document.documentElement.setAttribute('data-theme', cur);
-            localStorage.setItem('iestpu_theme', cur);
-            updateThemeBtnLabel();
-        }
-        function updateThemeBtnLabel() {
-            var btn = document.getElementById('btnThemeToggle');
-            if (!btn) return;
-            var isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-            btn.innerHTML = isDark
-                ? '<i class="fa-solid fa-sun"></i> Modo Claro'
-                : '<i class="fa-solid fa-moon"></i> Modo Oscuro';
-        }
-        document.addEventListener('DOMContentLoaded', updateThemeBtnLabel);
-    </script>
 </head>
 <body>
-<div class="sidebar d-flex flex-column justify-content-between">
-    <div>
-        <div class="p-3 d-flex align-items-center gap-2 border-bottom" style="border-color:rgba(255,255,255,0.08)!important;">
-            <img src="<?= baseUrl('assets/img/logo.png') ?>" alt="Escudo IESTPU" style="width:38px;height:44px;background:#fff;padding:3px;border-radius:7px;">
+<script>
+    if (localStorage.getItem('iestpu_theme') === 'dark') {
+        document.body.classList.add('dark-mode');
+    }
+</script>
+<div class="app-shell">
+    <aside class="app-sidebar" id="appSidebar">
+        <div class="sidebar-brand">
+            <img src="<?= h(baseUrl('assets/img/logo.png')) ?>" alt="Escudo IESTPU">
             <div>
-                <div class="fw-bold text-white" style="font-size:0.94rem;line-height:1.15;">SoporteTécnico</div>
-                <div style="font-size:0.71rem;font-weight:600;color:#93c5fd;">IESTP UTCUBAMBA</div>
+                <div class="fw-bold text-white" style="font-size:.95rem;line-height:1.15;">SoporteTécnico</div>
+                <div style="font-size:.7rem;color:#a7f3d0;letter-spacing:.05em;">IESTP UTCUBAMBA · 2026</div>
             </div>
         </div>
-        <div class="p-2 mx-2 my-2 rounded" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);">
-            <div class="fw-semibold text-white" style="font-size:0.79rem;"><?= htmlspecialchars($u['nombres']) ?></div>
-            <span class="badge mt-1" style="font-size:0.67rem;background:#243754;color:#bfdbfe;border:1px solid #355078;"><?= htmlspecialchars(strtoupper($u['rol'])) ?> · <?= htmlspecialchars($u['programa']) ?></span>
-        </div>
-        <div class="nav-section">Principal</div>
-        <a href="<?= baseUrl('admin/index.php') ?>" class="nav-link <?= $activeMenu==='inicio'?'active':'' ?>"><i class="fa-solid fa-gauge-high fa-fw"></i> Inicio / Panel</a>
-        <div class="nav-section">Módulos de Inventario</div>
-        <a href="<?= baseUrl('admin/equipos.php') ?>" class="nav-link <?= $activeMenu==='inventario'?'active':'' ?>"><i class="fa-solid fa-boxes-stacked fa-fw"></i> 1. Inventario Bienes (3,475)</a>
-        <a href="<?= baseUrl('admin/inventariar_apsti.php') ?>" class="nav-link <?= $activeMenu==='apsti'?'active':'' ?>"><i class="fa-solid fa-desktop fa-fw"></i> Formulario Inv. APSTI</a>
-        <a href="<?= baseUrl('admin/cafetin.php') ?>" class="nav-link <?= $activeMenu==='cafetin'?'active':'' ?>"><i class="fa-solid fa-mug-hot fa-fw"></i> Módulo Cafetín (30 Bienes)</a>
-        <a href="<?= baseUrl('admin/buscar_equipo.php') ?>" class="nav-link <?= $activeMenu==='buscar'?'active':'' ?>"><i class="fa-solid fa-magnifying-glass fa-fw"></i> 2. Mantenimiento / Buscar</a>
-        <div class="nav-section">Flujo de 3 Pasos y Fichas</div>
-        <a href="<?= baseUrl('docente/reportar.php') ?>" class="nav-link <?= $activeMenu==='reportar'?'active':'' ?>"><i class="fa-solid fa-triangle-exclamation fa-fw"></i> Paso 1: Reportar Falla</a>
-        <a href="<?= baseUrl('admin/verificacion_admin.php') ?>" class="nav-link <?= $activeMenu==='verificacion'?'active':'' ?>"><i class="fa-solid fa-clipboard-check fa-fw"></i> Paso 2: Verificar + Ficha</a>
-        <a href="<?= baseUrl('tecnico/trabajos.php') ?>" class="nav-link <?= $activeMenu==='tecnico'?'active':'' ?>"><i class="fa-solid fa-screwdriver-wrench fa-fw"></i> Paso 3: Área Técnica</a>
-        <a href="<?= baseUrl('admin/cronograma.php') ?>" class="nav-link <?= $activeMenu==='cronograma'?'active':'' ?>"><i class="fa-solid fa-calendar-check fa-fw"></i> Cronograma Preventivo</a>
-        <a href="<?= baseUrl('admin/reportes.php') ?>" class="nav-link <?= $activeMenu==='reportes'?'active':'' ?>"><i class="fa-solid fa-chart-pie fa-fw"></i> Reportes (PDF / Excel)</a>
-        <div class="nav-section">Seguridad y Cuentas</div>
-        <a href="<?= baseUrl('admin/usuarios.php') ?>" class="nav-link <?= $activeMenu==='usuarios'?'active':'' ?>"><i class="fa-solid fa-users-gear fa-fw"></i> Usuarios y Contraseñas</a>
-    </div>
-    <div class="p-2 px-3 border-top" style="border-color:rgba(255,255,255,0.08)!important;">
-        <a href="<?= baseUrl('logout.php') ?>" class="btn btn-sm w-100 fw-semibold" style="font-size:0.80rem;background:rgba(155,44,44,0.22);color:#fecaca;border:1px solid rgba(252,165,165,0.35);"><i class="fa-solid fa-right-from-bracket me-1"></i> Cerrar Sesión</a>
-    </div>
-</div>
-<div class="main-content">
-    <div class="top-utility-bar no-print">
-        <div class="d-flex align-items-center gap-2">
-            <span class="badge bg-success"><i class="fa-solid fa-circle-check me-1"></i> <?= htmlspecialchars($dbMode) ?></span>
-            <span class="small text-secondary d-none d-md-inline">IESTP «Utcubamba» · Bagua Grande 2026</span>
-        </div>
-        <div class="d-flex align-items-center gap-2">
-            <button type="button" id="btnThemeToggle" class="theme-toggle-btn" onclick="toggleThemeMode()">
-                <i class="fa-solid fa-moon"></i> Modo Oscuro
-            </button>
-            <a href="<?= baseUrl('admin/buscar_equipo.php') ?>" class="btn btn-outline-primary btn-sm" style="border-radius:8px;font-size:0.78rem;">
-                <i class="fa-solid fa-magnifying-glass me-1"></i> Buscar Código / Serie
-            </a>
-            <a href="<?= baseUrl('logout.php') ?>" class="btn btn-outline-danger btn-sm" style="border-radius:8px;font-size:0.78rem;">
-                <i class="fa-solid fa-right-from-bracket me-1"></i> Cerrar Sesión
-            </a>
-        </div>
-    </div>
-    <div class="print-only-header">
-        <div class="d-flex align-items-center gap-3">
-            <img src="<?= baseUrl('assets/img/logo.png') ?>" style="width:55px;">
-            <div>
-                <div style="font-size:10pt;font-weight:bold;">INSTITUTO DE EDUCACIÓN SUPERIOR TECNOLÓGICO PÚBLICO «UTCUBAMBA»</div>
-                <div style="font-size:9pt;">Cód. Modular: 741744 · Bagua Grande – Utcubamba – Amazonas · Sistema Web de Inventario y Mantenimiento 2026</div>
+        <div class="sidebar-user">
+            <div class="fw-semibold text-white text-truncate" style="font-size:.82rem;" title="<?= h($nombreUsuario) ?>">
+                <?= h($nombreUsuario) ?>
+            </div>
+            <div class="mt-1 d-flex align-items-center gap-1 flex-wrap">
+                <span class="badge bg-success bg-opacity-25 text-white border border-success border-opacity-50" style="font-size:.66rem;">
+                    <?= h(strtoupper($rol)) ?>
+                </span>
+                <span class="badge bg-light bg-opacity-10 text-light" style="font-size:.66rem;">
+                    ÁREA: <?= h($programaLabel) ?>
+                </span>
             </div>
         </div>
-        <div style="font-size:9pt;text-align:right;">
-            <strong>Fecha:</strong> <?= date('d/m/Y H:i') ?><br>
-            <strong>Usuario:</strong> <?= htmlspecialchars($u['nombres']) ?>
+
+        <nav class="pb-3 flex-grow-1">
+            <?php foreach ($menuSections as $sec): ?>
+                <div class="sidebar-section-label"><?= h($sec['label']) ?></div>
+                <?php foreach ($sec['items'] as $item): ?>
+                    <a class="sidebar-link <?= $activeMenu === $item['id'] ? 'active' : '' ?>" href="<?= h($item['href']) ?>">
+                        <i class="fa-solid <?= h($item['icon']) ?>"></i>
+                        <span><?= h($item['label']) ?></span>
+                    </a>
+                <?php endforeach; ?>
+            <?php endforeach; ?>
+        </nav>
+
+        <div class="p-3 border-top border-light border-opacity-10 small text-center" style="color:rgba(203,213,225,.7);font-size:.72rem;">
+            IESTP «Utcubamba» · Bagua Grande<br>Sistema de Mantenimiento TAP 2026
         </div>
-    </div>
+    </aside>
+
+    <div class="app-main">
+        <header class="app-topbar">
+            <div class="d-flex align-items-center gap-2">
+                <button class="btn btn-sm btn-outline-secondary d-lg-none" type="button" onclick="document.getElementById('appSidebar').classList.toggle('open')" aria-label="Menú">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
+                <div>
+                    <div class="fw-bold" style="font-size:.98rem;line-height:1.15;"><?= h($titulo) ?></div>
+                    <div class="text-muted" style="font-size:.75rem;">IESTP «Utcubamba» · Gestión Patrimonial y Soporte Técnico</div>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btnThemeToggle" onclick="toggleThemeMode()">
+                    <i class="fa-solid fa-moon me-1"></i><span>Modo Oscuro</span>
+                </button>
+                <a href="<?= h(baseUrl('admin/buscar_equipo.php')) ?>" class="btn btn-sm btn-outline-secondary d-none d-md-inline-flex align-items-center gap-1">
+                    <i class="fa-solid fa-magnifying-glass"></i><span>Buscar Código</span>
+                </a>
+                <a href="<?= h(baseUrl('logout.php')) ?>" class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1">
+                    <i class="fa-solid fa-right-from-bracket"></i><span>Cerrar Sesión</span>
+                </a>
+            </div>
+        </header>
+
+        <main class="app-content">
 <?php
 }
 
 function renderFooter(): void {
     ?>
+        </main>
+    </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    function updateThemeBtnLabel() {
+        var btn = document.getElementById('btnThemeToggle');
+        if (!btn) return;
+        var dark = document.body.classList.contains('dark-mode');
+        btn.innerHTML = dark
+            ? '<i class="fa-solid fa-sun me-1"></i><span>Modo Claro</span>'
+            : '<i class="fa-solid fa-moon me-1"></i><span>Modo Oscuro</span>';
+    }
+    function toggleThemeMode() {
+        document.body.classList.toggle('dark-mode');
+        localStorage.setItem('iestpu_theme', document.body.classList.contains('dark-mode') ? 'dark' : 'light');
+        updateThemeBtnLabel();
+    }
+    updateThemeBtnLabel();
+</script>
 </body>
 </html>
 <?php
