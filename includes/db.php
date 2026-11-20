@@ -290,7 +290,6 @@ class LocalJsonPDO {
     }
 
     private function filterRows(array $rows, string $where, array $params): array {
-        // Case 1: login query (correo = ? OR dni = ? OR nombres LIKE ?)
         if (stripos($where, 'correo = ? OR dni = ? OR nombres LIKE ?') !== false) {
             $idVal = mb_strtolower(trim((string)($params[0] ?? '')));
             $likeVal = mb_strtolower(trim(str_replace('%', '', (string)($params[2] ?? $idVal))));
@@ -301,7 +300,6 @@ class LocalJsonPDO {
             }));
         }
 
-        // Case 2: buscar_equipo.php (correlativo = ? OR codigo_apsti LIKE ? OR codigo_interno LIKE ? OR serie LIKE ?)
         if (stripos($where, 'correlativo = ? OR codigo_apsti LIKE ?') !== false && stripos($where, '1=1') === false) {
             $exact = mb_strtolower(trim((string)($params[0] ?? '')));
             $needle = mb_strtolower(trim(str_replace('%', '', (string)($params[1] ?? $exact))));
@@ -314,7 +312,6 @@ class LocalJsonPDO {
             }));
         }
 
-        // Case 3: equipos.php / reportes.php / cronograma.php compound WHERE
         $pIdx = 0;
         $filtered = $rows;
 
@@ -430,13 +427,11 @@ function instalarBaseDeDatosDesdeCero(PDO $pdoServer, string $dbName): void {
     $_SESSION['db_schema_ok'] = true;
 }
 
-
 function ensureHardenedSchema(PDO $pdo): void {
     if (!empty($_SESSION['hardened_schema_checked'])) {
         return;
     }
     try {
-        // 1. Asegurar columna activo y longitud de hash bcrypt en usuarios
         $colsU = $pdo->query("SHOW COLUMNS FROM usuarios")->fetchAll(PDO::FETCH_COLUMN);
         if (is_array($colsU) && !in_array('activo', $colsU, true)) {
             $pdo->exec("ALTER TABLE usuarios ADD COLUMN activo TINYINT(1) NOT NULL DEFAULT 1");
@@ -445,7 +440,6 @@ function ensureHardenedSchema(PDO $pdo): void {
             $pdo->exec("ALTER TABLE usuarios MODIFY COLUMN clave VARCHAR(255) NOT NULL");
         } catch (Throwable $e) {}
 
-        // Convertir cualquier contraseña en texto plano a bcrypt sin perder cuentas
         $us = $pdo->query("SELECT id, clave FROM usuarios")->fetchAll();
         foreach ($us as $rowU) {
             $cl = (string)($rowU['clave'] ?? '');
@@ -457,7 +451,6 @@ function ensureHardenedSchema(PDO $pdo): void {
             }
         }
 
-        // 2. Columnas P2 en solicitudes_mantenimiento
         $colsS = $pdo->query("SHOW COLUMNS FROM solicitudes_mantenimiento")->fetchAll(PDO::FETCH_COLUMN);
         $addCols = [
             'tipo_mantenimiento' => "VARCHAR(30) DEFAULT 'CORRECTIVO'",
@@ -473,7 +466,6 @@ function ensureHardenedSchema(PDO $pdo): void {
             }
         }
 
-        // 3. Tablas P2 (movimientos_bienes y auditoria_logs)
         $pdo->exec("CREATE TABLE IF NOT EXISTS movimientos_bienes (
             id INT AUTO_INCREMENT PRIMARY KEY,
             codigo_acta VARCHAR(40) NOT NULL,
@@ -528,22 +520,14 @@ function crearConexionPDO(array $dbCfg, int $timeoutSec = 2, bool $isCloud = fal
     return new PDO($dsn, $dbCfg['usuario'], $dbCfg['clave'], $pdoOpts);
 }
 
-/**
- * Devuelve una conexión activa 100% libre de fallos:
- * 1) Si MySQL en XAMPP (puerto 3306) está encendido, lo usa de inmediato.
- * 2) Si está en Render con DB_HOST o se pide explícitamente TiDB Cloud (?target=tidb), intenta TiDB Cloud.
- * 3) Si MySQL en XAMPP está apagado/caído o TiDB Cloud rechaza la IP, activa automáticamente el motor local
- *    integrado (SQLite PDO o Motor Relacional Local JSON) en menos de 5 milisegundos sin lanzar errores.
- */
 function getPDO(bool $forceReinstall = false, string $forceTarget = 'auto') {
     static $pdo = null;
     if ($pdo !== null && !$forceReinstall && $forceTarget === 'auto') {
         return $pdo;
     }
     require_once __DIR__ . '/auth.php';
-$cfg = require dirname(__DIR__) . '/config/config.php';
+    $cfg = require dirname(__DIR__) . '/config/config.php';
 
-    // Si está desplegado en Render (nube) o se pidió explícitamente probar TiDB Cloud:
     if ($forceTarget === 'tidb' || getenv('RENDER') || getenv('DB_HOST')) {
         try {
             $dbCloud = $cfg['db_cloud'];
@@ -569,11 +553,10 @@ $cfg = require dirname(__DIR__) . '/config/config.php';
             $_SESSION['db_mode_label'] = 'TiDB Cloud Serverless (Conectado en la Nube)';
             return $pdo = $pdoCloud;
         } catch (Throwable $cloudEx) {
-            // Si TiDB Cloud bloquea la IP o clave, continuamos con el motor local sin romper el sistema
+            // Fallback local si falla la nube
         }
     }
 
-    // Capa 1: Verificar en 0.15 segundos si MySQL de XAMPP (127.0.0.1:3306) está encendido
     $sock = @fsockopen('127.0.0.1', 3306, $errno, $errstr, 0.15);
     if ($sock !== false) {
         fclose($sock);
@@ -601,11 +584,10 @@ $cfg = require dirname(__DIR__) . '/config/config.php';
             $_SESSION['db_mode_label'] = 'MySQL Local XAMPP (127.0.0.1:3306)';
             return $pdo = $pdoLocal;
         } catch (Throwable $mysqlEx) {
-            // Si MySQL local tiene otra clave o error de tablas, pasa automáticamente a la Capa 2/3
+            // Pasa a Capa 2/3
         }
     }
 
-    // Capa 2: Motor SQLite PDO integrado (si pdo_sqlite está habilitado en PHP)
     $sqliteFile = dirname(__DIR__) . '/storage/bd_mantenimiento_iestpu.sqlite';
     if (class_exists('PDO') && in_array('sqlite', PDO::getAvailableDrivers(), true) && file_exists($sqliteFile)) {
         try {
@@ -616,20 +598,23 @@ $cfg = require dirname(__DIR__) . '/config/config.php';
             $_SESSION['db_mode_label'] = 'Motor Local Autónomo SQLite (Ultrarrápido)';
             return $pdo = $pdoSqlite;
         } catch (Throwable $sqEx) {
-            // Pasa a la Capa 3
+            // Pasa a Capa 3
         }
     }
 
-    // Capa 3: Motor Relacional en PHP Puro (Funciona siempre al 100% sin depender de servicios externos)
     $jsonLive = dirname(__DIR__) . '/storage/bd_mantenimiento_local.json';
     $jsonSeed = dirname(__DIR__) . '/storage/bd_mantenimiento_seed.json';
     $_SESSION['db_mode_label'] = 'Motor Local Autónomo Activo (Sin bloqueo de puerto)';
     return $pdo = new LocalJsonPDO($jsonLive, $jsonSeed, $forceReinstall);
 }
 
+function getDB(bool $forceReinstall = false, string $forceTarget = 'auto') {
+    return getPDO($forceReinstall, $forceTarget);
+}
+
 function baseUrl(string $path = ''): string {
     require_once __DIR__ . '/auth.php';
-$cfg = require dirname(__DIR__) . '/config/config.php';
+    $cfg = require dirname(__DIR__) . '/config/config.php';
     $b = rtrim($cfg['app']['base_url'], '/');
     return $b . '/' . ltrim($path, '/');
 }
