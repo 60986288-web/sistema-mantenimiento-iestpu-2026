@@ -12,7 +12,7 @@ if ($rol === 'tecnico') {
 }
 
 require_role(['admin', 'coordinador_apsti', 'coordinador_cont', 'coordinador_enfe', 'coordinador_agro']);
-$pdo = getDB();
+$pdo = getPDO();
 $scope = get_user_program_scope($u);
 
 // Métricas filtradas según el rol/programa

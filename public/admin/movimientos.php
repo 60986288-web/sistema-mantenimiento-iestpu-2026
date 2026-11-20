@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/layout.php';
 
 $u = require_role(['admin']);
-$pdo = getDB();
+$pdo = getPDO();
 
 // Vista imprimible de Acta de Movimiento Patrimonial
 if (isset($_GET['acta_id']) && (int)$_GET['acta_id'] > 0) {

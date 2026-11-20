@@ -7,7 +7,7 @@ require_once __DIR__ . '/../../includes/auth.php';
 $u = require_login();
 $rol = get_user_role($u);
 $scope = get_user_program_scope($u);
-$pdo = getDB();
+$pdo = getPDO();
 
 $solId = isset($_GET['sol_id']) ? (int)$_GET['sol_id'] : 0;
 $bienIdParam = isset($_GET['bien_id']) ? (int)$_GET['bien_id'] : 0;

@@ -6,7 +6,7 @@ require_once __DIR__ . '/../../includes/layout.php';
 
 $u = require_role(['admin', 'tecnico', 'coordinador_apsti', 'coordinador_cont', 'coordinador_enfe', 'coordinador_agro']);
 $scope = get_user_program_scope($u);
-$pdo = getDB();
+$pdo = getPDO();
 
 $prog = $scope !== null ? $scope : strtoupper(trim((string)($_GET['programa'] ?? '')));
 $q = trim((string)($_GET['q'] ?? ''));

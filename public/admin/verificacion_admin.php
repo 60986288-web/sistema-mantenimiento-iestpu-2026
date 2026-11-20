@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/layout.php';
 
 $u = require_role(['admin']);
-$pdo = getDB();
+$pdo = getPDO();
 
 $msg = '';
 $err = '';
@@ -36,7 +36,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $pref = stripos($tipoFicha, 'OBSERVAC') !== false ? 'FICHA-OBS' : 'FICHA-MNT';
                 $numFicha = !empty($solActual['numero_ficha'])
                     ? (string)$solActual['numero_ficha']
-                    : ($pref . '-2026-' . str_pad((string)(13 + $solId), 3, '0', STR_PAD_LEFT));
+                    : ($pref . '-2026-' . (preg_match('/(\d+)$/', (string)($solActual['codigo_solicitud'] ?? ''), $mNum) ? $mNum[1] : str_pad((string)$solId, 3, '0', STR_PAD_LEFT)));
 
                 $stUpd = $pdo->prepare(
                     "UPDATE solicitudes_mantenimiento

@@ -7,7 +7,7 @@ require_once __DIR__ . '/../../includes/layout.php';
 $u = require_role(['admin', 'coordinador_apsti', 'coordinador_cont', 'coordinador_enfe', 'coordinador_agro']);
 $rol = get_user_role($u);
 $scope = get_user_program_scope($u);
-$pdo = getDB();
+$pdo = getPDO();
 
 $msg = '';
 $err = '';

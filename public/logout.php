@@ -6,7 +6,7 @@ require_once __DIR__ . '/../includes/auth.php';
 
 if (!empty($_SESSION['usuario'])) {
     try {
-        $pdo = getDB();
+        $pdo = getPDO();
         registrar_auditoria($pdo, 'LOGOUT', 'usuarios', (int)($_SESSION['usuario']['id'] ?? 0), 'Cierre de sesión');
     } catch (Throwable $e) {
         // Continuar cierre aunque no haya conexión

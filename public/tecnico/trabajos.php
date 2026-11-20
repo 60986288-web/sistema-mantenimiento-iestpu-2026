@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/layout.php';
 
 $u = require_role(['admin', 'tecnico']);
-$pdo = getDB();
+$pdo = getPDO();
 
 $msg = '';
 $err = '';

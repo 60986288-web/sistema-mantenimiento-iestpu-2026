@@ -6,7 +6,7 @@ require_once __DIR__ . '/../../includes/layout.php';
 
 $u = require_role(['admin', 'coordinador_apsti', 'coordinador_cont', 'coordinador_enfe', 'coordinador_agro']);
 $scope = get_user_program_scope($u);
-$pdo = getDB();
+$pdo = getPDO();
 
 $msg = '';
 $err = '';
@@ -72,19 +72,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
+// Filtro de programa para el historial (Admin puede elegir Todos/ENFE/CONT/AGRO/APSTI; Coordinador solo su área)
+$filtroHist = $scope !== null ? $scope : strtoupper(trim((string)($_GET['programa'] ?? 'TODOS')));
+if (!in_array($filtroHist, ['TODOS', 'ENFE', 'CONT', 'AGRO', 'APSTI', 'CAFETIN', 'ADMIN'], true)) {
+    $filtroHist = 'TODOS';
+}
+
 // Cargar selector de equipos filtrado estrictamente por área cuando es coordinador
 if ($scope !== null) {
     $stEq = $pdo->prepare('SELECT id, codigo_apsti, denominacion, area_ambiente FROM bienes_inventario WHERE programa = ? AND requiere_mantenimiento = 1 ORDER BY codigo_apsti ASC');
     $stEq->execute([$scope]);
     $equipos = $stEq->fetchAll();
-
-    $stHist = $pdo->prepare('SELECT s.* FROM solicitudes_mantenimiento s INNER JOIN bienes_inventario b ON b.id = s.bien_id WHERE b.programa = ? ORDER BY s.id DESC');
-    $stHist->execute([$scope]);
-    $historial = $stHist->fetchAll();
 } else {
     $equipos = $pdo->query('SELECT id, codigo_apsti, denominacion, area_ambiente, programa FROM bienes_inventario WHERE requiere_mantenimiento = 1 ORDER BY programa ASC, codigo_apsti ASC')->fetchAll();
-    $historial = $pdo->query('SELECT * FROM solicitudes_mantenimiento ORDER BY id DESC')->fetchAll();
 }
+
+// Historial con JOIN a bienes_inventario para mostrar todos los campos oficiales del formato institucional
+$sqlHist = "SELECT s.*,
+                   b.correlativo, b.codigo_apsti, b.codigo_interno, b.denominacion AS bien_denominacion,
+                   b.marca, b.modelo, b.tipo_material, b.color, b.serie, b.dimensiones,
+                   b.estado_conservacion, b.programa AS bien_programa
+            FROM solicitudes_mantenimiento s
+            LEFT JOIN bienes_inventario b ON b.id = s.bien_id";
+$histParams = [];
+if ($filtroHist !== 'TODOS') {
+    $sqlHist .= " WHERE b.programa = ?";
+    $histParams[] = $filtroHist;
+}
+$sqlHist .= " ORDER BY s.id DESC";
+$stHist = $pdo->prepare($sqlHist);
+$stHist->execute($histParams);
+$historial = $stHist->fetchAll();
 
 renderHeader('Paso 1: Reportar Falla de Equipo', 'reportar');
 ?>
@@ -143,55 +161,101 @@ renderHeader('Paso 1: Reportar Falla de Equipo', 'reportar');
 </div>
 
 <div class="card-clean p-3">
-    <h6 class="fw-bold mb-3">Historial de Solicitudes <?= $scope ? h("— Área {$scope}") : 'Registradas' ?></h6>
-    <div class="table-responsive">
-        <table class="table table-hover align-middle small mb-0">
+    <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-2 mb-3">
+        <h6 class="fw-bold mb-0">Historial de Solicitudes Registradas (Detalle Patrimonial Oficial)</h6>
+        <?php if ($scope === null): ?>
+            <div class="d-flex flex-wrap gap-1">
+                <?php
+                $filtrosBtn = [
+                    'TODOS' => 'Todos',
+                    'ENFE'  => 'Enfermería',
+                    'CONT'  => 'Contabilidad',
+                    'AGRO'  => 'Agropecuaria',
+                    'APSTI' => 'APSTI',
+                ];
+                foreach ($filtrosBtn as $cod => $lbl):
+                ?>
+                    <a href="<?= h(baseUrl('docente/reportar.php?programa=' . $cod)) ?>"
+                       class="btn btn-sm <?= $filtroHist === $cod ? 'btn-emerald fw-bold' : 'btn-outline-secondary' ?>">
+                        <?= h($lbl) ?>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </div>
+
+    <div class="table-responsive" style="overflow-x:auto;">
+        <table class="table table-sm table-bordered table-hover align-middle small mb-0">
             <thead>
-                <tr>
-                    <th class="nowrap-col">Solicitud</th>
-                    <th>Equipo</th>
-                    <th>Falla Reportada</th>
-                    <th class="nowrap-col">Fecha Reporte</th>
-                    <th class="nowrap-col">Etapa Actual</th>
-                    <th class="nowrap-col">N.º Ficha</th>
-                    <th class="nowrap-col text-end">Documento</th>
+                <tr class="text-center">
+                    <th rowspan="2">N.°</th>
+                    <th rowspan="2" class="nowrap-col">Solicitud</th>
+                    <th colspan="11">DESCRIPCIÓN DE LOS BIENES (INVENTARIO OFICIAL)</th>
+                    <th rowspan="2">Falla Reportada</th>
+                    <th rowspan="2" class="nowrap-col">Etapa / N.º Ficha</th>
+                    <th rowspan="2" class="nowrap-col">Doc.</th>
+                </tr>
+                <tr class="text-center">
+                    <th class="nowrap-col">Cód. Patrimonial</th>
+                    <th class="nowrap-col">Cód. Interno</th>
+                    <th>Denominación</th>
+                    <th>Marca</th>
+                    <th>Modelo</th>
+                    <th>Tipo</th>
+                    <th>Color</th>
+                    <th>Serie</th>
+                    <th>Dimensiones</th>
+                    <th class="nowrap-col">Situación</th>
+                    <th class="nowrap-col">Est. Cons.</th>
                 </tr>
             </thead>
             <tbody>
                 <?php if (empty($historial)): ?>
-                    <tr><td colspan="7" class="text-center text-muted py-4">No existen solicitudes registradas aún.</td></tr>
+                    <tr><td colspan="16" class="text-center text-muted py-4">No existen solicitudes registradas para este filtro.</td></tr>
                 <?php else: ?>
-                    <?php foreach ($historial as $s):
+                    <?php $idx = 1; foreach ($historial as $s):
                         $etapa = (string)($s['estado_flujo'] ?? '1_REPORTADO_AREA');
                         $badgeEtapa = match ($etapa) {
-                            '1_REPORTADO_AREA' => '<span class="badge bg-warning text-dark">Paso 1: Reportado por Área</span>',
-                            '2_VERIFICADO_CON_FICHA' => '<span class="badge bg-info text-dark">Paso 2: Verificado (Con Ficha)</span>',
-                            '3_ATENDIDO_AREA_TECNICA' => '<span class="badge bg-success">Paso 3: Atendido y Cerrado</span>',
+                            '1_REPORTADO_AREA' => '<span class="badge bg-warning text-dark">Paso 1: Reportado</span>',
+                            '2_VERIFICADO_CON_FICHA' => '<span class="badge bg-info text-dark">Paso 2: Verificado</span>',
+                            '3_ATENDIDO_AREA_TECNICA' => '<span class="badge bg-success">Paso 3: Atendido</span>',
                             default => '<span class="badge bg-secondary">En proceso</span>',
                         };
                         $ficha = trim((string)($s['numero_ficha'] ?? ''));
+                        $estC = strtoupper(trim((string)($s['estado_conservacion'] ?? 'B')));
+                        $sit = $estC === 'M' ? 'D' : 'U';
                     ?>
                         <tr>
-                            <td class="nowrap-col fw-bold"><?= h($s['codigo_solicitud']) ?></td>
-                            <td>
-                                <div class="fw-bold text-primary"><?= h($s['codigo_bien']) ?></div>
-                                <div class="text-muted" style="font-size:.75rem;"><?= h($s['descripcion_bien']) ?></div>
+                            <td class="text-center"><?= $idx++ ?></td>
+                            <td class="nowrap-col fw-bold">
+                                <?= h($s['codigo_solicitud']) ?>
+                                <div class="text-muted" style="font-size:.7rem;"><?= h(fmt_fecha($s['fecha_reporte'] ?? null)) ?></div>
                             </td>
-                            <td>
+                            <td class="nowrap-col text-center"><?= h(clean_tech_value($s['correlativo'] ?? '')) ?></td>
+                            <td class="nowrap-col fw-bold text-primary"><?= h(clean_tech_value($s['codigo_bien'] ?? $s['codigo_apsti'] ?? '')) ?></td>
+                            <td class="fw-semibold"><?= h(clean_tech_value($s['bien_denominacion'] ?? $s['descripcion_bien'] ?? '')) ?></td>
+                            <td><?= h(clean_tech_value($s['marca'] ?? '')) ?></td>
+                            <td><?= h(clean_tech_value($s['modelo'] ?? '')) ?></td>
+                            <td><?= h(clean_tech_value($s['tipo_material'] ?? '')) ?></td>
+                            <td><?= h(clean_tech_value($s['color'] ?? '')) ?></td>
+                            <td><?= h(clean_tech_value($s['serie'] ?? '')) ?></td>
+                            <td><?= h(clean_tech_value($s['dimensiones'] ?? '')) ?></td>
+                            <td class="text-center fw-bold"><?= h($sit) ?></td>
+                            <td class="text-center fw-bold"><?= h($estC) ?></td>
+                            <td style="min-width:170px;">
                                 <?= h($s['falla_reportada']) ?>
                                 <?php if (!empty($s['foto_falla'])): ?>
-                                    <div class="mt-1"><a href="<?= h(baseUrl((string)$s['foto_falla'])) ?>" target="_blank" class="badge bg-light text-primary border text-decoration-none"><i class="fa-solid fa-image me-1"></i>Ver evidencia</a></div>
+                                    <div class="mt-1"><a href="<?= h(baseUrl((string)$s['foto_falla'])) ?>" target="_blank" class="badge bg-light text-primary border text-decoration-none"><i class="fa-solid fa-image me-1"></i>Evidencia</a></div>
                                 <?php endif; ?>
                             </td>
-                            <td class="nowrap-col"><?= h(fmt_fecha_hora($s['fecha_reporte'] ?? null)) ?></td>
-                            <td class="nowrap-col"><?= $badgeEtapa ?></td>
                             <td class="nowrap-col">
-                                <?= $ficha !== '' ? '<span class="fw-bold text-danger">' . h($ficha) . '</span>' : '<span class="text-muted fst-italic">Pendiente</span>' ?>
+                                <?= $badgeEtapa ?>
+                                <div class="mt-1"><?= $ficha !== '' ? '<span class="fw-bold text-danger">' . h($ficha) . '</span>' : '<span class="text-muted fst-italic">Pendiente</span>' ?></div>
                             </td>
-                            <td class="nowrap-col text-end">
+                            <td class="nowrap-col text-center">
                                 <?php if ($ficha !== '' && $etapa !== '1_REPORTADO_AREA'): ?>
-                                    <a href="<?= h(baseUrl('admin/ficha_mantenimiento.php?sol_id=' . (int)$s['id'])) ?>" target="_blank" class="btn btn-sm btn-outline-success">
-                                        <i class="fa-solid fa-file-pdf me-1"></i>Ver Ficha
+                                    <a href="<?= h(baseUrl('admin/ficha_mantenimiento.php?sol_id=' . (int)$s['id'])) ?>" target="_blank" class="btn btn-sm btn-outline-success" title="Ver Ficha PDF">
+                                        <i class="fa-solid fa-file-pdf"></i>
                                     </a>
                                 <?php else: ?>
                                     <button type="button" class="btn btn-sm btn-outline-secondary" disabled title="Pendiente de verificación administrativa">

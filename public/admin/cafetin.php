@@ -5,7 +5,7 @@ require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/layout.php';
 
 require_role(['admin']);
-$pdo = getDB();
+$pdo = getPDO();
 
 $bienesCafetin = $pdo->query("SELECT * FROM bienes_inventario WHERE programa = 'CAFETIN' ORDER BY id ASC")->fetchAll();
 $conMant = 0;
