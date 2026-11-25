@@ -4,7 +4,7 @@ require dirname(__DIR__, 2) . '/includes/bootstrap.php';
 require dirname(__DIR__, 2) . '/includes/layout.php';
 require dirname(__DIR__, 2) . '/includes/catalogos.php';
 
-// Reemplazar cabecera CSP para permitir impresión PDF sin bloqueos del navegador
+// Reemplazar cabecera CSP para que el botón de Imprimir / PDF funcione siempre sin bloqueos
 header("Content-Security-Policy: default-src 'self'; style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'", true);
 
 $u = requiere_rol('admin_general', 'admin_programa', 'tecnico');
@@ -15,34 +15,8 @@ if (!$progs) {
 
 $fPrograma = get_int('programa');
 $fAmbiente = get_int('ambiente');
-$fSoloMant = isset($_GET['solo_mant']) ? (int) $_GET['solo_mant'] : 1;
+$fSoloMant = isset($_GET['solo_mant']) ? (int) $_GET['solo_mant'] : 0; // 0 = Todos los bienes, 1 = Solo mantenibles
 
-[$whereAmb, $paramsAmb] = filtro_programas('a.programa_id', $progs);
-if ($fPrograma && in_array($fPrograma, $progs, true)) {
-    $whereAmb .= ' AND a.programa_id = ?';
-    $paramsAmb[] = $fPrograma;
-}
-
-// 1. Resumen consolidado por Área / Ambiente / Laboratorio
-$resumenAreas = consulta(
-    "SELECT a.id AS ambiente_id, a.codigo AS ambiente_cod, a.nombre AS ambiente, a.tipo,
-            pr.id AS programa_id, pr.codigo AS programa_cod, pr.nombre AS programa_nombre,
-            COUNT(e.id) AS total_bienes,
-            SUM(CASE WHEN e.requiere_mantenimiento = 1 THEN 1 ELSE 0 END) AS equipos_mant,
-            SUM(CASE WHEN e.requiere_mantenimiento = 1 AND JSON_UNQUOTE(JSON_EXTRACT(e.especificaciones, '$.estado_servicio')) = 'completo' THEN 1 ELSE 0 END) AS mant_completos,
-            SUM(CASE WHEN e.requiere_mantenimiento = 1 AND JSON_UNQUOTE(JSON_EXTRACT(e.especificaciones, '$.estado_servicio')) <> 'completo' THEN 1 ELSE 0 END) AS mant_pendientes,
-            SUM(CASE WHEN e.requiere_mantenimiento = 1 AND e.fecha_limite_mantenimiento BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 30 DAY) THEN 1 ELSE 0 END) AS por_vencer_30d,
-            SUM(CASE WHEN e.requiere_mantenimiento = 1 AND e.fecha_limite_mantenimiento < CURDATE() THEN 1 ELSE 0 END) AS vencidos
-       FROM ambientes a
-       JOIN programas pr ON pr.id = a.programa_id
-       LEFT JOIN equipos e ON e.ambiente_id = a.id AND e.estado <> 'dado_de_baja'
-      WHERE a.activo = 1 AND $whereAmb
-      GROUP BY a.id, a.codigo, a.nombre, a.tipo, pr.id, pr.codigo, pr.nombre
-      ORDER BY FIELD(pr.codigo,'APSTI','CONT','ENFE','AGRO','ADMIN'), equipos_mant DESC, a.nombre",
-    $paramsAmb
-)->fetchAll();
-
-// 2. Detalle de equipos del Área o Programa seleccionado
 [$whereEq, $paramsEq] = filtro_programas('e.programa_id', $progs);
 if ($fPrograma && in_array($fPrograma, $progs, true)) {
     $whereEq .= ' AND e.programa_id = ?';
@@ -58,9 +32,10 @@ if ($fSoloMant === 1) {
 
 $equiposDetalle = consulta(
     "SELECT e.id, e.numero_orden, e.codigo_inventario, e.codigo_interno, e.codigo_patrimonial,
-            e.nombre, e.marca, e.modelo, e.numero_serie, e.fecha_adquisicion,
-            e.estado, e.estado_conservacion, e.requiere_mantenimiento, e.frecuencia_mantenimiento,
-            e.ultimo_mantenimiento, e.fecha_limite_mantenimiento, e.responsable_bien, e.especificaciones,
+            e.nombre, e.marca, e.modelo, e.tipo_fisico, e.color, e.numero_serie, e.dimensiones,
+            e.fecha_adquisicion, e.estado, e.estado_conservacion, e.situacion,
+            e.requiere_mantenimiento, e.ultimo_mantenimiento, e.fecha_limite_mantenimiento,
+            e.responsable_bien, e.especificaciones,
             pr.codigo AS programa_cod, pr.nombre AS programa_nombre,
             a.nombre AS ambiente_nombre,
             DATEDIFF(e.fecha_limite_mantenimiento, CURDATE()) AS dias_restantes
@@ -68,46 +43,46 @@ $equiposDetalle = consulta(
        JOIN programas pr ON pr.id = e.programa_id
        LEFT JOIN ambientes a ON a.id = e.ambiente_id
       WHERE $whereEq AND e.estado <> 'dado_de_baja'
-      ORDER BY pr.codigo, a.nombre, e.fecha_limite_mantenimiento ASC, e.codigo_inventario
-      LIMIT 1000",
+      ORDER BY pr.codigo, a.nombre, e.codigo_inventario
+      LIMIT 1500",
     $paramsEq
 )->fetchAll();
 
-// Totales KPI
-$kpiTotal      = count($equiposDetalle);
-$kpiCompletos  = 0;
-$kpiPendientes = 0;
-$kpiVencidos   = 0;
-$kpiProximos   = 0;
-foreach ($equiposDetalle as $row) {
-    $espTmp = json_decode((string) ($row['especificaciones'] ?? '{}'), true) ?: [];
-    $estSrv = strtolower((string) ($espTmp['estado_servicio'] ?? 'pendiente'));
-    if ($estSrv === 'completo') {
-        $kpiCompletos++;
-    } else {
-        $kpiPendientes++;
+// Texto del Área / Programa filtrado para el encabezado oficial
+$selProg = programas_para_select($u);
+[$fAmbSel, $pAmbSel] = filtro_programas('programa_id', $progs);
+if ($fPrograma && in_array($fPrograma, $progs, true)) {
+    $fAmbSel .= ' AND programa_id = ?';
+    $pAmbSel[] = $fPrograma;
+}
+$selAmbientes = consulta("SELECT id, nombre FROM ambientes WHERE activo = 1 AND $fAmbSel ORDER BY nombre", $pAmbSel)->fetchAll();
+
+$tituloFiltro = 'TODOS LOS PROGRAMAS Y ÁREAS';
+if ($fAmbiente) {
+    foreach ($selAmbientes as $am) {
+        if ((int) $am['id'] === $fAmbiente) {
+            $tituloFiltro = mb_strtoupper((string) $am['nombre'], 'UTF-8');
+            break;
+        }
     }
-    if ($row['dias_restantes'] !== null) {
-        $d = (int) $row['dias_restantes'];
-        if ($d < 0) {
-            $kpiVencidos++;
-        } elseif ($d <= 30) {
-            $kpiProximos++;
+} elseif ($fPrograma) {
+    foreach ($selProg as $pg) {
+        if ((int) $pg['id'] === $fPrograma) {
+            $tituloFiltro = mb_strtoupper($pg['codigo'] . ' - ' . $pg['nombre'], 'UTF-8');
+            break;
         }
     }
 }
 
+// =========================================================================
+// EXPORTACIÓN A EXCEL ORDENADO CON COLORES, ENCABEZADOS Y ANCHOS FIJOS (.xls)
+// =========================================================================
 $exportar = (string) ($_GET['exportar'] ?? '');
-
-// =========================================================================
-// EXPORTACIÓN 1: EXCEL PROFESIONAL CON COLORES, ENCABEZADOS Y ANCHOS FIJOS
-// =========================================================================
 if ($exportar === 'excel' || $exportar === 'csv') {
-    $filename = 'Reporte_Mantenimiento_IESTPU_' . date('Ymd_His') . '.xls';
+    $filename = 'Inventario_Mantenimiento_IESTPU_' . date('Ymd_His') . '.xls';
     header('Content-Type: application/vnd.ms-excel; charset=utf-8');
     header('Content-Disposition: attachment; filename="' . $filename . '"');
     header('Cache-Control: max-age=0');
-
     echo "\xEF\xBB\xBF";
     ?>
 <html xmlns:o="urn:schemas-microsoft-com:office:office"
@@ -120,13 +95,18 @@ if ($exportar === 'excel' || $exportar === 'csv') {
     <x:ExcelWorkbook>
       <x:ExcelWorksheets>
         <x:ExcelWorksheet>
-          <x:Name>Reporte Mantenimiento</x:Name>
+          <x:Name>Inventario IESTPU</x:Name>
           <x:WorksheetOptions>
             <x:DisplayGridlines/>
+            <x:Print>
+              <x:ValidPrinterInfo/>
+              <x:PaperSizeIndex>9</x:PaperSizeIndex>
+              <x:Scale>75</x:Scale>
+            </x:Print>
             <x:FreezePanes/>
             <x:FrozenNoSplit/>
-            <x:SplitHorizontal>6</x:SplitHorizontal>
-            <x:TopRowBottomPane>6</x:TopRowBottomPane>
+            <x:SplitHorizontal>7</x:SplitHorizontal>
+            <x:TopRowBottomPane>7</x:TopRowBottomPane>
             <x:ActivePane>2</x:ActivePane>
           </x:WorksheetOptions>
         </x:ExcelWorksheet>
@@ -137,120 +117,86 @@ if ($exportar === 'excel' || $exportar === 'csv') {
   <style>
     body { font-family: Calibri, Arial, sans-serif; font-size: 10pt; color: #0F172A; }
     table { border-collapse: collapse; }
-    .banner-inst { background: #1E3A8A; color: #FFFFFF; font-size: 14pt; font-weight: bold; text-align: center; height: 30px; }
-    .banner-sub  { background: #1D4ED8; color: #E0E7FF; font-size: 11pt; font-weight: bold; text-align: center; height: 24px; }
-    .meta-row    { background: #F1F5F9; color: #334155; font-size: 9.5pt; text-align: left; height: 22px; }
-    .kpi-lbl     { background: #E2E8F0; color: #1E293B; font-weight: bold; text-align: center; border: 1px solid #94A3B8; }
-    .kpi-val     { background: #FFFFFF; font-weight: bold; font-size: 11pt; text-align: center; border: 1px solid #94A3B8; }
-    .th-main     { background: #0F172A; color: #FFFFFF; font-weight: bold; text-align: center; border: 1px solid #334155; height: 28px; vertical-align: middle; }
-    .td-data     { border: 1px solid #CBD5E1; padding: 5px 6px; vertical-align: middle; height: 22px; }
-    .td-zebra    { background: #F8FAFC; }
-    .txt-code    { mso-number-format:"\@"; font-weight: bold; color: #1E3A8A; }
-    .txt-plain   { mso-number-format:"\@"; }
-    .center      { text-align: center; }
-    .badge-ok    { background: #DCFCE7; color: #166534; font-weight: bold; text-align: center; }
-    .badge-warn  { background: #FEF3C7; color: #92400E; font-weight: bold; text-align: center; }
-    .badge-err   { background: #FEE2E2; color: #991B1B; font-weight: bold; text-align: center; }
-    .badge-prog  { background: #DBEAFE; color: #1E40AF; font-weight: bold; text-align: center; }
+    .banner-1 { background: #1E3A8A; color: #FFFFFF; font-size: 14pt; font-weight: bold; text-align: center; height: 28px; }
+    .banner-2 { background: #1D4ED8; color: #FFFFFF; font-size: 11pt; font-weight: bold; text-align: center; height: 24px; }
+    .meta-lbl { background: #E2E8F0; color: #0F172A; font-weight: bold; border: 1px solid #94A3B8; padding: 4px; }
+    .meta-val { background: #FFFFFF; color: #0F172A; border: 1px solid #94A3B8; padding: 4px; }
+    .th-main  { background: #0F172A; color: #FFFFFF; font-weight: bold; text-align: center; border: 1px solid #334155; height: 28px; vertical-align: middle; }
+    .td-data  { border: 1px solid #CBD5E1; padding: 5px 6px; vertical-align: middle; height: 22px; }
+    .zebra    { background: #F8FAFC; }
+    .code     { mso-number-format:"\@"; font-weight: bold; color: #1E3A8A; text-align: center; }
+    .plain    { mso-number-format:"\@"; text-align: center; }
+    .center   { text-align: center; }
+    .ok       { background: #DCFCE7; color: #166534; font-weight: bold; text-align: center; }
+    .warn     { background: #FEF3C7; color: #92400E; font-weight: bold; text-align: center; }
+    .err      { background: #FEE2E2; color: #991B1B; font-weight: bold; text-align: center; }
+    .prog     { background: #DBEAFE; color: #1E40AF; font-weight: bold; text-align: center; }
   </style>
 </head>
 <body>
   <table>
-    <col width="95">
-    <col width="230">
-    <col width="135">
-    <col width="200">
-    <col width="120">
-    <col width="155">
-    <col width="150">
-    <col width="115">
-    <col width="95">
-    <col width="115">
-    <col width="120">
-    <col width="145">
-    <col width="130">
-    <col width="230">
-
+    <col width="85"><col width="180"><col width="120"><col width="125"><col width="200">
+    <col width="110"><col width="145"><col width="115"><col width="105"><col width="145">
+    <col width="135"><col width="95"><col width="115"><col width="115">
+    <tr><td colspan="14" class="banner-1">INSTITUTO DE EDUCACIÓN SUPERIOR TECNOLÓGICO PÚBLICO "UTCUBAMBA" · CÓD. MODULAR 741744</td></tr>
+    <tr><td colspan="14" class="banner-2">INVENTARIO GENERAL DE BIENES INSTITUCIONAL - <?= date('Y') ?> · <?= e($tituloFiltro) ?></td></tr>
     <tr>
-      <td colspan="14" class="banner-inst">INSTITUTO DE EDUCACIÓN SUPERIOR TECNOLÓGICO PÚBLICO "UTCUBAMBA" · CÓD. MODULAR 741744</td>
+      <td colspan="2" class="meta-lbl">NOMBRE DE LA ENTIDAD:</td>
+      <td colspan="5" class="meta-val">INSTITUTO DE EDUCACIÓN SUPERIOR TECNOLÓGICO PÚBLICO UTCUBAMBA</td>
+      <td colspan="2" class="meta-lbl">LUGAR / DISTRITO:</td>
+      <td colspan="5" class="meta-val">BAGUA GRANDE — PROV. UTCUBAMBA</td>
     </tr>
     <tr>
-      <td colspan="14" class="banner-sub">REPORTE DE INVENTARIO Y CONTROL DE MANTENIMIENTO POR PROGRAMA DE ESTUDIO Y ÁREA</td>
+      <td colspan="2" class="meta-lbl">ÁREA / PROGRAMA:</td>
+      <td colspan="5" class="meta-val"><strong><?= e($tituloFiltro) ?></strong></td>
+      <td colspan="2" class="meta-lbl">COMITÉ DE INVENTARIOS:</td>
+      <td colspan="5" class="meta-val">Sandoval Dávila Carlos Enrique · Cruz Bobadilla Stalin · Occ Briceño Lluvitza</td>
     </tr>
     <tr>
-      <td colspan="14" class="meta-row">
-        <strong>Emitido por:</strong> <?= e($u['nombres'] . ' ' . $u['apellidos'] . ' (' . $u['rol_nombre'] . ')') ?>
-        &nbsp;&nbsp;|&nbsp;&nbsp;<strong>Fecha de emisión:</strong> <?= e(date('d/m/Y H:i')) ?>
-        &nbsp;&nbsp;|&nbsp;&nbsp;<strong>Filtro:</strong> <?= $fSoloMant === 1 ? 'Solo Equipos con Mantenimiento' : 'Todos los Bienes del Área' ?>
-      </td>
+      <td colspan="2" class="meta-lbl">EMITIDO POR:</td>
+      <td colspan="5" class="meta-val"><?= e($u['nombres'] . ' ' . $u['apellidos'] . ' (' . $u['rol_nombre'] . ')') ?></td>
+      <td colspan="2" class="meta-lbl">FECHA DE EMISIÓN:</td>
+      <td colspan="5" class="meta-val"><?= e(date('d/m/Y H:i')) ?> (<?= count($equiposDetalle) ?> registros)</td>
     </tr>
-    <tr>
-      <td colspan="2" class="kpi-lbl">TOTAL REGISTROS</td>
-      <td colspan="1" class="kpi-val" style="color:#1E3A8A;"><?= $kpiTotal ?></td>
-      <td colspan="2" class="kpi-lbl">SERVICIO COMPLETO</td>
-      <td colspan="1" class="kpi-val" style="background:#DCFCE7;color:#166534;"><?= $kpiCompletos ?></td>
-      <td colspan="2" class="kpi-lbl">SERVICIO PENDIENTE</td>
-      <td colspan="1" class="kpi-val" style="background:#FEF3C7;color:#92400E;"><?= $kpiPendientes ?></td>
-      <td colspan="2" class="kpi-lbl">POR VENCER (≤ 30 DÍAS)</td>
-      <td colspan="1" class="kpi-val" style="background:#FEF3C7;color:#92400E;"><?= $kpiProximos ?></td>
-      <td colspan="1" class="kpi-lbl">VENCIDOS</td>
-      <td colspan="1" class="kpi-val" style="background:#FEE2E2;color:#991B1B;"><?= $kpiVencidos ?></td>
-    </tr>
-    <tr><td colspan="14" style="height: 8px; border: none;"></td></tr>
+    <tr><td colspan="14" style="height:8px;border:none;"></td></tr>
     <tr>
       <th class="th-main">PROGRAMA</th>
-      <th class="th-main">ÁREA / AMBIENTE / LABORATORIO</th>
-      <th class="th-main">CÓDIGO</th>
-      <th class="th-main">DENOMINACIÓN / EQUIPO</th>
+      <th class="th-main">ÁREA / AMBIENTE</th>
+      <th class="th-main">CÓD. PATRIMONIAL</th>
+      <th class="th-main">CÓD. INTERNO</th>
+      <th class="th-main">DENOMINACIÓN</th>
       <th class="th-main">MARCA</th>
       <th class="th-main">MODELO</th>
-      <th class="th-main">N.° DE SERIE</th>
-      <th class="th-main">FECHA COMPRA</th>
-      <th class="th-main">CONSERV.</th>
-      <th class="th-main">ÚLTIMO MANT.</th>
-      <th class="th-main">FECHA LÍMITE</th>
-      <th class="th-main">ESTADO PLAZO / DÍAS</th>
-      <th class="th-main">ESTADO SERVICIO</th>
-      <th class="th-main">RESPONSABLE DE ÁREA</th>
+      <th class="th-main">TIPO</th>
+      <th class="th-main">COLOR</th>
+      <th class="th-main">SERIE</th>
+      <th class="th-main">DIMENSIONES</th>
+      <th class="th-main">SITUACIÓN (1)</th>
+      <th class="th-main">CONSERVACIÓN (2)</th>
+      <th class="th-main">FECHA LÍMITE MANT.</th>
     </tr>
-    <?php foreach ($equiposDetalle as $idx => $row): ?>
+    <?php foreach ($equiposDetalle as $idx => $eq): ?>
       <?php
-        $esp = json_decode((string) ($row['especificaciones'] ?? '{}'), true) ?: [];
-        $estSrv = strtoupper((string) ($esp['estado_servicio'] ?? 'PENDIENTE'));
-        $zebra = ($idx % 2 === 1) ? ' td-zebra' : '';
-        $srvClass = ($estSrv === 'COMPLETO') ? 'badge-ok' : 'badge-warn';
-        if ($row['dias_restantes'] === null) {
-            $diasTxt = 'No aplica';
-            $diasClass = 'center';
-        } else {
-            $d = (int) $row['dias_restantes'];
-            if ($d < 0) {
-                $diasTxt = 'VENCIDO (' . abs($d) . ' días)';
-                $diasClass = 'badge-err';
-            } elseif ($d <= 30) {
-                $diasTxt = 'POR VENCER (' . $d . ' días)';
-                $diasClass = 'badge-warn';
-            } else {
-                $diasTxt = 'AL DÍA (' . $d . ' días)';
-                $diasClass = 'badge-ok';
-            }
-        }
+        $z = ($idx % 2 === 1) ? ' zebra' : '';
+        $sitTxt = ($eq['situacion'] === 'almacen') ? 'A' : 'U';
+        $cons = strtoupper((string) ($eq['estado_conservacion'] ?: 'B'));
+        $consCls = in_array($cons, ['N', 'MB', 'B'], true) ? 'ok' : ($cons === 'R' ? 'warn' : 'err');
       ?>
       <tr>
-        <td class="td-data badge-prog"><?= e($row['programa_cod']) ?></td>
-        <td class="td-data<?= $zebra ?>"><?= e($row['ambiente_nombre'] ?? '—') ?></td>
-        <td class="td-data txt-code center<?= $zebra ?>"><?= e($row['codigo_interno'] ?: $row['codigo_inventario']) ?></td>
-        <td class="td-data<?= $zebra ?>" style="font-weight:bold;"><?= e($row['nombre']) ?></td>
-        <td class="td-data<?= $zebra ?>"><?= e($row['marca'] ?: '—') ?></td>
-        <td class="td-data<?= $zebra ?>"><?= e($row['modelo'] ?: '—') ?></td>
-        <td class="td-data txt-plain center<?= $zebra ?>"><?= e($row['numero_serie'] ?: '—') ?></td>
-        <td class="td-data center<?= $zebra ?>"><?= $row['fecha_adquisicion'] ? e(date('d/m/Y', strtotime((string) $row['fecha_adquisicion']))) : '—' ?></td>
-        <td class="td-data center<?= $zebra ?>" style="font-weight:bold;"><?= e($row['estado_conservacion'] ?: '—') ?></td>
-        <td class="td-data center<?= $zebra ?>"><?= $row['ultimo_mantenimiento'] ? e(date('d/m/Y', strtotime((string) $row['ultimo_mantenimiento']))) : '—' ?></td>
-        <td class="td-data center<?= $zebra ?>" style="font-weight:bold;"><?= $row['fecha_limite_mantenimiento'] ? e(date('d/m/Y', strtotime((string) $row['fecha_limite_mantenimiento']))) : '—' ?></td>
-        <td class="td-data <?= $diasClass ?>"><?= e($diasTxt) ?></td>
-        <td class="td-data <?= $srvClass ?>"><?= e($estSrv) ?></td>
-        <td class="td-data<?= $zebra ?>"><?= e($row['responsable_bien'] ?: '—') ?></td>
+        <td class="td-data prog"><?= e($eq['programa_cod']) ?></td>
+        <td class="td-data<?= $z ?>"><?= e($eq['ambiente_nombre'] ?? '—') ?></td>
+        <td class="td-data plain<?= $z ?>"><?= e($eq['codigo_patrimonial'] ?: str_pad((string) $eq['id'], 3, '0', STR_PAD_LEFT)) ?></td>
+        <td class="td-data code<?= $z ?>"><?= e($eq['codigo_interno'] ?: $eq['codigo_inventario']) ?></td>
+        <td class="td-data<?= $z ?>" style="font-weight:bold;"><?= e($eq['nombre']) ?></td>
+        <td class="td-data<?= $z ?>"><?= e($eq['marca'] ?: 'No registrado') ?></td>
+        <td class="td-data<?= $z ?>"><?= e($eq['modelo'] ?: 'No registrado') ?></td>
+        <td class="td-data<?= $z ?>"><?= e($eq['tipo_fisico'] ?: 'No registrado') ?></td>
+        <td class="td-data<?= $z ?>"><?= e($eq['color'] ?: 'No registrado') ?></td>
+        <td class="td-data plain<?= $z ?>"><?= e($eq['numero_serie'] ?: 'No registrado') ?></td>
+        <td class="td-data<?= $z ?>"><?= e($eq['dimensiones'] ?: 'No registrado') ?></td>
+        <td class="td-data center<?= $z ?>" style="font-weight:bold;"><?= e($sitTxt) ?></td>
+        <td class="td-data <?= $consCls ?>"><?= e($cons) ?></td>
+        <td class="td-data center<?= $z ?>"><?= $eq['fecha_limite_mantenimiento'] ? e(date('d/m/Y', strtotime((string) $eq['fecha_limite_mantenimiento']))) : 'No aplica' ?></td>
       </tr>
     <?php endforeach; ?>
   </table>
@@ -260,198 +206,175 @@ if ($exportar === 'excel' || $exportar === 'csv') {
     exit;
 }
 
-// =========================================================================
-// EXPORTACIÓN 2: VISTA DEDICADA DE IMPRESIÓN / GUARDAR COMO PDF (A4 HORIZONTAL)
-// =========================================================================
-if ($exportar === 'pdf') {
-    ?>
-<!doctype html>
-<html lang="es">
-<head>
-  <meta charset="utf-8">
-  <title>Reporte PDF · Mantenimiento IESTPU</title>
-  <style>
-    @page { size: A4 landscape; margin: 12mm; }
-    * { box-sizing: border-box; }
-    body { font-family: Arial, Helvetica, sans-serif; font-size: 9.5pt; color: #0F172A; margin: 0; padding: 16px; background: #fff; }
-    .toolbar { display: flex; justify-content: space-between; align-items: center; background: #0F172A; color: #fff; padding: 10px 16px; border-radius: 8px; margin-bottom: 16px; }
-    .btn { display: inline-block; padding: 8px 14px; border-radius: 6px; font-weight: bold; text-decoration: none; cursor: pointer; border: none; font-size: 10pt; }
-    .btn-print { background: #EF4444; color: #fff; }
-    .btn-back  { background: #334155; color: #fff; margin-left: 8px; }
-    .header-box { border: 2px solid #1E3A8A; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; background: #F8FAFC; }
-    .header-title { color: #1E3A8A; font-size: 13pt; font-weight: bold; margin: 0; }
-    .header-sub { font-size: 9.5pt; color: #334155; margin-top: 3px; }
-    .kpi-grid { display: flex; gap: 10px; margin-bottom: 14px; }
-    .kpi-card { flex: 1; border: 1px solid #CBD5E1; border-radius: 6px; padding: 8px 10px; text-align: center; }
-    .kpi-card .num { font-size: 14pt; font-weight: bold; }
-    .kpi-card .lbl { font-size: 8.5pt; color: #475569; text-transform: uppercase; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
-    th { background: #1E3A8A; color: #fff; padding: 6px 5px; font-size: 8.5pt; border: 1px solid #1E3A8A; text-align: left; }
-    td { padding: 5px; font-size: 8.5pt; border: 1px solid #CBD5E1; vertical-align: middle; }
-    tbody tr:nth-child(even) { background: #F8FAFC; }
-    .center { text-align: center; }
-    .pill { display: inline-block; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 8pt; }
-    .ok   { background: #DCFCE7; color: #166534; }
-    .warn { background: #FEF3C7; color: #92400E; }
-    .err  { background: #FEE2E2; color: #991B1B; }
-    .prog { background: #DBEAFE; color: #1E40AF; }
-    .sec-title { font-size: 10.5pt; font-weight: bold; color: #1E3A8A; margin: 12px 0 6px 0; text-transform: uppercase; border-bottom: 2px solid #1E3A8A; padding-bottom: 3px; }
-    @media print {
-      body { padding: 0; }
-      .no-print { display: none !important; }
-      thead { display: table-header-group; }
-      tr { page-break-inside: avoid; }
-    }
-  </style>
-</head>
-<body>
-  <div class="toolbar no-print">
-    <div><strong>Vista Previa Lista para PDF / Impresión</strong> — En el cuadro de impresión elija <em>"Guardar como PDF"</em> (o presione <code>Ctrl + P</code>).</div>
-    <div>
-      <button type="button" class="btn btn-print" id="btnImprimirAhora">Guardar PDF / Imprimir</button>
-      <a class="btn btn-back" href="<?= e(url('admin/reportes.php?' . http_build_query(['programa' => $fPrograma, 'ambiente' => $fAmbiente, 'solo_mant' => $fSoloMant]))) ?>">← Volver</a>
-    </div>
-  </div>
-
-  <div class="header-box">
-    <div>
-      <div class="header-title">I.E.S.T. PÚBLICO "UTCUBAMBA" · CÓDIGO MODULAR 741744</div>
-      <div class="header-sub"><strong>REPORTE DE INVENTARIO Y FECHAS LÍMITE DE MANTENIMIENTO POR PROGRAMA Y ÁREA</strong></div>
-    </div>
-    <div style="text-align: right; font-size: 8.5pt; color: #334155;">
-      <div><strong>Emitido por:</strong> <?= e($u['nombres'] . ' ' . $u['apellidos']) ?></div>
-      <div><strong>Perfil:</strong> <?= e($u['rol_nombre']) ?></div>
-      <div><strong>Fecha:</strong> <?= e(date('d/m/Y H:i')) ?></div>
-    </div>
-  </div>
-
-  <div class="kpi-grid">
-    <div class="kpi-card"><div class="num" style="color:#1E3A8A;"><?= $kpiTotal ?></div><div class="lbl">Equipos en Reporte</div></div>
-    <div class="kpi-card" style="background:#F0FDF4;"><div class="num" style="color:#166534;"><?= $kpiCompletos ?></div><div class="lbl">Servicio Completo</div></div>
-    <div class="kpi-card" style="background:#FFFBEB;"><div class="num" style="color:#92400E;"><?= $kpiPendientes ?></div><div class="lbl">Servicio Pendiente</div></div>
-    <div class="kpi-card" style="background:#FFFBEB;"><div class="num" style="color:#B45309;"><?= $kpiProximos ?></div><div class="lbl">Por Vencer (≤30 días)</div></div>
-    <div class="kpi-card" style="background:#FEF2F2;"><div class="num" style="color:#991B1B;"><?= $kpiVencidos ?></div><div class="lbl">Fecha Límite Vencida</div></div>
-  </div>
-
-  <div class="sec-title">1. Resumen Consolidado por Área / Laboratorio</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Programa</th>
-        <th>Área / Laboratorio / Oficina</th>
-        <th class="center">Total Bienes</th>
-        <th class="center">Equipos Mant.</th>
-        <th class="center">Completo</th>
-        <th class="center">Pendiente</th>
-        <th class="center">Por Vencer (≤30d)</th>
-        <th class="center">Vencidos</th>
-      </tr>
-    </thead>
-    <tbody>
-      <?php foreach ($resumenAreas as $ra): ?>
-        <tr>
-          <td class="center"><span class="pill prog"><?= e($ra['programa_cod']) ?></span></td>
-          <td><strong><?= e($ra['ambiente']) ?></strong></td>
-          <td class="center"><?= (int) $ra['total_bienes'] ?></td>
-          <td class="center"><strong><?= (int) $ra['equipos_mant'] ?></strong></td>
-          <td class="center"><span class="pill ok"><?= (int) $ra['mant_completos'] ?></span></td>
-          <td class="center"><span class="pill warn"><?= (int) $ra['mant_pendientes'] ?></span></td>
-          <td class="center"><span class="pill warn"><?= (int) $ra['por_vencer_30d'] ?></span></td>
-          <td class="center"><span class="pill err"><?= (int) $ra['vencidos'] ?></span></td>
-        </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
-
-  <div class="sec-title">2. Detalle de Equipos, Fechas de Mantenimiento y Estado de Servicio</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Prog.</th>
-        <th>Área / Ambiente</th>
-        <th>Código</th>
-        <th>Dispositivo</th>
-        <th>Marca / Modelo</th>
-        <th>Serie</th>
-        <th class="center">Compra</th>
-        <th class="center">Últ. Mant.</th>
-        <th class="center">Fecha Límite</th>
-        <th class="center">Plazo</th>
-        <th class="center">Servicio</th>
-        <th>Responsable</th>
-      </tr>
-    </thead>
-    <tbody>
-      <?php foreach ($equiposDetalle as $eq): ?>
-        <?php
-          $esp = json_decode((string) ($eq['especificaciones'] ?? '{}'), true) ?: [];
-          $estSrv = strtoupper((string) ($esp['estado_servicio'] ?? 'PENDIENTE'));
-          $d = $eq['dias_restantes'] !== null ? (int) $eq['dias_restantes'] : null;
-          $plazoCls = $d === null ? '' : ($d < 0 ? 'err' : ($d <= 30 ? 'warn' : 'ok'));
-          $plazoTxt = $d === null ? '—' : ($d < 0 ? 'Vencido (' . abs($d) . 'd)' : ($d . ' días'));
-        ?>
-        <tr>
-          <td class="center"><span class="pill prog"><?= e($eq['programa_cod']) ?></span></td>
-          <td><?= e($eq['ambiente_nombre'] ?? '—') ?></td>
-          <td><strong><?= e($eq['codigo_interno'] ?: $eq['codigo_inventario']) ?></strong></td>
-          <td><strong><?= e($eq['nombre']) ?></strong></td>
-          <td><?= e(trim(($eq['marca'] ?? '') . ' ' . ($eq['modelo'] ?? '')) ?: '—') ?></td>
-          <td><?= e($eq['numero_serie'] ?: '—') ?></td>
-          <td class="center"><?= $eq['fecha_adquisicion'] ? e(date('d/m/Y', strtotime((string) $eq['fecha_adquisicion']))) : '—' ?></td>
-          <td class="center"><?= $eq['ultimo_mantenimiento'] ? e(date('d/m/Y', strtotime((string) $eq['ultimo_mantenimiento']))) : '—' ?></td>
-          <td class="center"><strong><?= $eq['fecha_limite_mantenimiento'] ? e(date('d/m/Y', strtotime((string) $eq['fecha_limite_mantenimiento']))) : '—' ?></strong></td>
-          <td class="center"><span class="pill <?= $plazoCls ?>"><?= e($plazoTxt) ?></span></td>
-          <td class="center"><span class="pill <?= $estSrv === 'COMPLETO' ? 'ok' : 'warn' ?>"><?= e($estSrv) ?></span></td>
-          <td><?= e($eq['responsable_bien'] ?: '—') ?></td>
-        </tr>
-      <?php endforeach; ?>
-    </tbody>
-  </table>
-
-  <script>
-    document.getElementById('btnImprimirAhora').addEventListener('click', function () { window.print(); });
-    window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });
-  </script>
-</body>
-</html>
-    <?php
-    exit;
-}
-
-$selProg = programas_para_select($u);
-[$fAmbSel, $pAmbSel] = filtro_programas('programa_id', $progs);
-if ($fPrograma && in_array($fPrograma, $progs, true)) {
-    $fAmbSel .= ' AND programa_id = ?';
-    $pAmbSel[] = $fPrograma;
-}
-$selAmbientes = consulta("SELECT id, nombre FROM ambientes WHERE activo = 1 AND $fAmbSel ORDER BY nombre", $pAmbSel)->fetchAll();
-
-cabecera('Reportes por Área y Programa de Estudio', $u);
+cabecera('Reportes Oficiales (PDF / Excel)', $u);
 ?>
 
+<style>
+  /* Fuerza hoja A4 HORIZONTAL automática al presionar Imprimir / PDF */
+  @page {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
+  .reporte-oficial {
+    background: #ffffff;
+    color: #0F172A;
+    padding: 18px;
+    border-radius: 8px;
+  }
+
+  .encabezado-inst {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .encabezado-inst img {
+    width: 58px;
+    height: auto;
+  }
+
+  .encabezado-centro {
+    text-align: center;
+    line-height: 1.3;
+  }
+
+  .banda-titulo {
+    border: 1.5px solid #0F172A;
+    background: #1E3A8A;
+    color: #FFFFFF;
+    text-align: center;
+    font-weight: 700;
+    font-size: 11pt;
+    padding: 5px;
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+
+  .tabla-meta {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 10px;
+    font-size: 9pt;
+  }
+
+  .tabla-meta td {
+    border: 1px solid #475569;
+    padding: 4px 7px;
+  }
+
+  .tabla-meta .m-lbl {
+    background: #F1F5F9;
+    font-weight: 700;
+    width: 16%;
+  }
+
+  .tabla-bienes {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 8.5pt;
+  }
+
+  .tabla-bienes th {
+    background: #0F172A;
+    color: #FFFFFF;
+    border: 1px solid #334155;
+    padding: 5px 4px;
+    text-align: center;
+    font-size: 7.8pt;
+    vertical-align: middle;
+    word-wrap: break-word;
+  }
+
+  .tabla-bienes td {
+    border: 1px solid #94A3B8;
+    padding: 4px 5px;
+    vertical-align: middle;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+  }
+
+  .tabla-bienes tbody tr:nth-child(even) {
+    background: #F8FAFC;
+  }
+
+  .cons-ok   { background: #DCFCE7 !important; color: #166534; font-weight: 700; text-align: center; }
+  .cons-warn { background: #FEF3C7 !important; color: #92400E; font-weight: 700; text-align: center; }
+  .cons-err  { background: #FEE2E2 !important; color: #991B1B; font-weight: 700; text-align: center; }
+
+  @media print {
+    * {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+      box-sizing: border-box !important;
+    }
+
+    html, body {
+      width: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      background: #FFFFFF !important;
+    }
+
+    .sidebar, nav.navbar, .no-print, .offcanvas {
+      display: none !important;
+    }
+
+    .flex-grow-1, main.container-fluid, .card, .card-body, .table-responsive, .reporte-oficial {
+      width: 100% !important;
+      max-width: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      overflow: visible !important;
+      border: none !important;
+      box-shadow: none !important;
+    }
+
+    .tabla-bienes {
+      width: 100% !important;
+      max-width: 100% !important;
+      table-layout: fixed !important;
+    }
+
+    .tabla-bienes th, .tabla-bienes td {
+      font-size: 7.2pt !important;
+      padding: 3px 3px !important;
+      line-height: 1.15 !important;
+    }
+
+    thead {
+      display: table-header-group !important;
+    }
+
+    tr {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+  }
+</style>
+
+<!-- Barra de acciones y filtros (no sale al imprimir) -->
 <div class="d-flex flex-wrap justify-content-between align-items-center mb-3 gap-2 no-print">
   <div>
     <h1 class="h3 fw-bold mb-0">
       <i class="bi bi-file-earmark-bar-graph text-primary me-2"></i>
-      Reportes Profesionales por Programa de Estudio y Área / Ambiente
+      Reportes Oficiales por Programa de Estudio y Área
     </h1>
-    <div class="text-muted small">
-      <?= $u['rol'] === 'admin_general'
-          ? 'Vista de Administrador General: Supervisión global de todas las áreas, laboratorios, oficinas y programas de estudio'
-          : 'Vista de Coordinador de Programa: Control de inventario, equipos con mantenimiento realizado y fechas límite de su programa' ?>
-    </div>
+    <div class="text-muted small">Impresión automática en hoja A4 Horizontal (todas las columnas completas) y exportación a Excel con colores</div>
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-success fw-semibold" href="<?= e(url('admin/reportes.php?' . http_build_query(['programa' => $fPrograma, 'ambiente' => $fAmbiente, 'solo_mant' => $fSoloMant, 'exportar' => 'excel']))) ?>">
       <i class="bi bi-file-earmark-excel me-1"></i>Exportar a Excel (Con Colores)
     </a>
-    <a class="btn btn-danger fw-semibold" href="<?= e(url('admin/reportes.php?' . http_build_query(['programa' => $fPrograma, 'ambiente' => $fAmbiente, 'solo_mant' => $fSoloMant, 'exportar' => 'pdf']))) ?>">
-      <i class="bi bi-file-earmark-pdf me-1"></i>Ver / Imprimir PDF
-    </a>
+    <button type="button" class="btn btn-danger fw-semibold" id="btnImprimirHorizontal">
+      <i class="bi bi-file-earmark-pdf me-1"></i>Imprimir / Guardar PDF (Horizontal)
+    </button>
   </div>
 </div>
 
-<form method="get" class="card card-body shadow-sm border-0 mb-4 no-print">
+<form method="get" class="card card-body shadow-sm border-0 mb-3 no-print">
   <div class="row g-2 align-items-end">
     <div class="col-md-3">
       <label class="form-label small fw-bold mb-1">Programa de Estudio / Área</label>
@@ -463,7 +386,7 @@ cabecera('Reportes por Área y Programa de Estudio', $u);
       </select>
     </div>
     <div class="col-md-4">
-      <label class="form-label small fw-bold mb-1">Oficina / Laboratorio / Aula Específica</label>
+      <label class="form-label small fw-bold mb-1">Oficina / Laboratorio / Aula</label>
       <select class="form-select form-select-sm" name="ambiente" onchange="this.form.submit()">
         <option value="">Todas las áreas / laboratorios (<?= count($selAmbientes) ?>)</option>
         <?php foreach ($selAmbientes as $am): ?>
@@ -472,121 +395,120 @@ cabecera('Reportes por Área y Programa de Estudio', $u);
       </select>
     </div>
     <div class="col-md-3">
-      <label class="form-label small fw-bold mb-1">Tipo de Bienes en el Detalle</label>
+      <label class="form-label small fw-bold mb-1">Bienes a Mostrar</label>
       <select class="form-select form-select-sm" name="solo_mant" onchange="this.form.submit()">
-        <option value="1" <?= $fSoloMant === 1 ? 'selected' : '' ?>>Solo Equipos con Fecha de Mantenimiento (CPUs, Laptops, Impresoras…)</option>
-        <option value="0" <?= $fSoloMant === 0 ? 'selected' : '' ?>>Todos los Bienes del Área (Incluye mobiliario y enseres)</option>
+        <option value="0" <?= $fSoloMant === 0 ? 'selected' : '' ?>>Todos los Bienes del Área (Acta completa)</option>
+        <option value="1" <?= $fSoloMant === 1 ? 'selected' : '' ?>>Solo Equipos con Fecha de Mantenimiento</option>
       </select>
     </div>
     <div class="col-md-2 d-grid">
-      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Generar Reporte</button>
+      <button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-funnel me-1"></i>Filtrar</button>
     </div>
   </div>
 </form>
 
-<div class="card shadow-sm border-0 mb-4">
-  <div class="card-header bg-white py-3">
-    <h2 class="h6 fw-bold mb-0 text-uppercase text-primary">
-      <i class="bi bi-building-check me-1"></i>1. Resumen Consolidado por Área, Laboratorio y Oficina (<?= count($resumenAreas) ?> ambientes)
-    </h2>
+<!-- REPORTE OFICIAL INSTITUCIONAL (VISIBLE EN PANTALLA Y LISTO PARA PDF HORIZONTAL) -->
+<div class="reporte-oficial shadow-sm">
+  <div class="encabezado-inst">
+    <img src="<?= e(url('assets/img/logo-iestp.png')) ?>" alt="Logo IESTPU">
+    <div class="encabezado-centro">
+      <div style="font-weight:700;font-size:10pt;">GOBIERNO REGIONAL AMAZONAS</div>
+      <div style="font-size:9pt;">DIRECCIÓN REGIONAL DE EDUCACIÓN AMAZONAS</div>
+      <div style="font-weight:800;font-size:11pt;color:#1E3A8A;">INSTITUTO DE EDUCACIÓN SUPERIOR TECNOLÓGICO PÚBLICO "UTCUBAMBA"</div>
+    </div>
+    <img src="<?= e(url('assets/img/logo-iestp.png')) ?>" alt="Logo IESTPU">
   </div>
+
+  <div class="banda-titulo">
+    INVENTARIO GENERAL DE BIENES INSTITUCIONAL - <?= date('Y') ?> · <?= e($tituloFiltro) ?>
+  </div>
+
+  <table class="tabla-meta">
+    <tr>
+      <td class="m-lbl">NOMBRE DE LA ENTIDAD:</td>
+      <td style="width:34%;">INSTITUTO DE EDUCACIÓN SUPERIOR TECNOLÓGICO PÚBLICO UTCUBAMBA</td>
+      <td class="m-lbl">LUGAR / DISTRITO:</td>
+      <td style="width:34%;">BAGUA GRANDE — PROV. UTCUBAMBA</td>
+    </tr>
+    <tr>
+      <td class="m-lbl">CÓDIGO MODULAR:</td>
+      <td>741744</td>
+      <td class="m-lbl">COMITÉ DE INVENTARIOS:</td>
+      <td>Sandoval Dávila Carlos Enrique · Cruz Bobadilla Stalin · Occ Briceño Lluvitza</td>
+    </tr>
+    <tr>
+      <td class="m-lbl">ÁREA / PROGRAMA:</td>
+      <td><strong><?= e($tituloFiltro) ?></strong></td>
+      <td class="m-lbl">FECHA DE EMISIÓN:</td>
+      <td><?= e(date('d/m/Y')) ?> (<?= count($equiposDetalle) ?> registros)</td>
+    </tr>
+  </table>
+
   <div class="table-responsive">
-    <table class="table table-hover table-sm align-middle mb-0">
-      <thead class="table-light">
+    <table class="tabla-bienes">
+      <colgroup>
+        <col style="width: 7%;">
+        <col style="width: 9%;">
+        <col style="width: 14%;">
+        <col style="width: 8%;">
+        <col style="width: 10%;">
+        <col style="width: 9%;">
+        <col style="width: 8%;">
+        <col style="width: 11%;">
+        <col style="width: 10%;">
+        <col style="width: 6%;">
+        <col style="width: 8%;">
+      </colgroup>
+      <thead>
         <tr>
-          <th>Programa</th>
-          <th>Área / Laboratorio / Oficina</th>
-          <th class="text-end">Total Bienes</th>
-          <th class="text-end">Equipos con Mant.</th>
-          <th class="text-end text-success">Servicio Completo</th>
-          <th class="text-end text-warning">Servicio Pendiente</th>
-          <th class="text-end">Por Vencer (≤30d)</th>
-          <th class="text-end text-danger">Vencidos</th>
-          <th class="text-end no-print">Filtrar Detalle</th>
+          <th colspan="11" style="background:#1E3A8A;font-size:8.5pt;">DESCRIPCIÓN DE LOS BIENES</th>
+        </tr>
+        <tr>
+          <th>CÓDIGO PATRIMONIAL</th>
+          <th>CÓDIGO INTERNO</th>
+          <th>DENOMINACIÓN</th>
+          <th>MARCA</th>
+          <th>MODELO</th>
+          <th>TIPO</th>
+          <th>COLOR</th>
+          <th>SERIE</th>
+          <th>DIMENSIONES (Medidas)</th>
+          <th>SITUACIÓN (1)</th>
+          <th>ESTADO DE CONSERVACIÓN (2)</th>
         </tr>
       </thead>
       <tbody>
-        <?php foreach ($resumenAreas as $ra): ?>
-          <tr class="<?= $fAmbiente === (int) $ra['ambiente_id'] ? 'table-primary' : '' ?>">
-            <td><span class="badge bg-primary"><?= e($ra['programa_cod']) ?></span></td>
-            <td class="fw-semibold"><?= e($ra['ambiente']) ?></td>
-            <td class="text-end"><?= number_format((int) $ra['total_bienes']) ?></td>
-            <td class="text-end fw-bold"><?= number_format((int) $ra['equipos_mant']) ?></td>
-            <td class="text-end text-success fw-semibold"><?= (int) $ra['mant_completos'] ?></td>
-            <td class="text-end text-warning-emphasis fw-semibold"><?= (int) $ra['mant_pendientes'] ?></td>
-            <td class="text-end"><span class="badge text-bg-warning text-dark"><?= (int) $ra['por_vencer_30d'] ?></span></td>
-            <td class="text-end"><span class="badge text-bg-danger"><?= (int) $ra['vencidos'] ?></span></td>
-            <td class="text-end no-print">
-              <a class="btn btn-sm btn-outline-primary py-0" href="<?= e(url('admin/reportes.php?programa=' . (int) $ra['programa_id'] . '&ambiente=' . (int) $ra['ambiente_id'] . '&solo_mant=' . $fSoloMant)) ?>">
-                Ver Equipos
-              </a>
-            </td>
+        <?php foreach ($equiposDetalle as $eq): ?>
+          <?php
+            $sitTxt = ($eq['situacion'] === 'almacen') ? 'A' : 'U';
+            $cons = strtoupper((string) ($eq['estado_conservacion'] ?: 'B'));
+            $consCls = in_array($cons, ['N', 'MB', 'B'], true) ? 'cons-ok' : ($cons === 'R' ? 'cons-warn' : 'cons-err');
+          ?>
+          <tr>
+            <td class="text-center"><?= e($eq['codigo_patrimonial'] ?: str_pad((string) $eq['id'], 3, '0', STR_PAD_LEFT)) ?></td>
+            <td class="text-center fw-bold" style="color:#1D4ED8;"><?= e($eq['codigo_interno'] ?: $eq['codigo_inventario']) ?></td>
+            <td class="fw-semibold"><?= e($eq['nombre']) ?></td>
+            <td><?= e($eq['marca'] ?: 'No registrado') ?></td>
+            <td><?= e($eq['modelo'] ?: 'No registrado') ?></td>
+            <td><?= e($eq['tipo_fisico'] ?: 'No registrado') ?></td>
+            <td><?= e($eq['color'] ?: 'No registrado') ?></td>
+            <td><?= e($eq['numero_serie'] ?: 'No registrado') ?></td>
+            <td><?= e($eq['dimensiones'] ?: 'No registrado') ?></td>
+            <td class="text-center fw-bold"><?= e($sitTxt) ?></td>
+            <td class="<?= $consCls ?>"><?= e($cons) ?></td>
           </tr>
-        <?php endforeach; ?>
+        <?php endforeach; if (!$equiposDetalle): ?>
+          <tr><td colspan="11" class="text-center text-muted py-4">No se encontraron registros con los filtros seleccionados.</td></tr>
+        <?php endif; ?>
       </tbody>
     </table>
   </div>
 </div>
 
-<div class="card shadow-sm border-0">
-  <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
-    <h2 class="h6 fw-bold mb-0 text-uppercase text-primary">
-      <i class="bi bi-list-columns-reverse me-1"></i>2. Detalle de Dispositivos, Estado de Mantenimiento y Fechas Límite (<?= count($equiposDetalle) ?> registros mostrados)
-    </h2>
-  </div>
-  <div class="table-responsive">
-    <table class="table table-hover table-sm align-middle mb-0">
-      <thead class="table-light">
-        <tr>
-          <th>Código</th>
-          <th>Dispositivo / Descripción</th>
-          <th>Marca / Modelo / Serie</th>
-          <th>Programa / Área</th>
-          <th>Fecha Compra</th>
-          <th>Últ. Mant.</th>
-          <th>Fecha Límite (A qué tiempo)</th>
-          <th>Estado Servicio</th>
-          <th class="text-end no-print">Ficha</th>
-        </tr>
-      </thead>
-      <tbody>
-        <?php foreach ($equiposDetalle as $eq): ?>
-          <?php $esp = json_decode((string) ($eq['especificaciones'] ?? '{}'), true) ?: []; ?>
-          <tr>
-            <td class="fw-bold text-nowrap">
-              <a href="<?= e(url('admin/buscar_equipo.php?id=' . (int) $eq['id'])) ?>" class="text-decoration-none">
-                <?= e($eq['codigo_interno'] ?: $eq['codigo_inventario']) ?>
-              </a>
-            </td>
-            <td class="fw-semibold"><?= e($eq['nombre']) ?></td>
-            <td class="small">
-              <?= e(trim(($eq['marca'] ?? '') . ' ' . ($eq['modelo'] ?? '')) ?: '—') ?>
-              <?php if (!empty($eq['numero_serie'])): ?>
-                <div class="text-muted">Serie: <?= e($eq['numero_serie']) ?></div>
-              <?php endif; ?>
-            </td>
-            <td class="small">
-              <span class="badge bg-secondary"><?= e($eq['programa_cod']) ?></span>
-              <?= e($eq['ambiente_nombre'] ?? '—') ?>
-            </td>
-            <td class="small text-nowrap"><?= $eq['fecha_adquisicion'] ? e(date('d/m/Y', strtotime((string) $eq['fecha_adquisicion']))) : '—' ?></td>
-            <td class="small text-nowrap"><?= $eq['ultimo_mantenimiento'] ? e(date('d/m/Y', strtotime((string) $eq['ultimo_mantenimiento']))) : '—' ?></td>
-            <td class="text-nowrap">
-              <?= semaforo_mantenimiento($eq['fecha_limite_mantenimiento'], (int) $eq['requiere_mantenimiento']) ?>
-            </td>
-            <td>
-              <?= (int) $eq['requiere_mantenimiento'] === 1 ? insignia_servicio($esp['estado_servicio'] ?? 'pendiente') : '<span class="text-muted small">Mobiliario</span>' ?>
-            </td>
-            <td class="text-end no-print">
-              <a class="btn btn-sm btn-outline-dark py-0" href="<?= e(url('admin/ficha_mantenimiento.php?id=' . (int) $eq['id'])) ?>">
-                <i class="bi bi-file-earmark-text"></i> Ficha
-              </a>
-            </td>
-          </tr>
-        <?php endforeach; ?>
-      </tbody>
-    </table>
-  </div>
-</div>
+<script>
+  document.getElementById('btnImprimirHorizontal').addEventListener('click', function () {
+    window.print();
+  });
+</script>
 
 <?php pie();
