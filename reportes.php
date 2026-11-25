@@ -4,8 +4,8 @@ require dirname(__DIR__, 2) . '/includes/bootstrap.php';
 require dirname(__DIR__, 2) . '/includes/layout.php';
 require dirname(__DIR__, 2) . '/includes/catalogos.php';
 
-// Permitir scripts de impresión (window.print) sin bloqueo de CSP en esta vista
-header("Content-Security-Policy: default-src 'self'; style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'");
+// Reemplazar cabecera CSP para permitir impresión PDF sin bloqueos del navegador
+header("Content-Security-Policy: default-src 'self'; style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net; frame-ancestors 'none'", true);
 
 $u = requiere_rol('admin_general', 'admin_programa', 'tecnico');
 $progs = programas_del_usuario((int) $u['id'], $u['rol']);
@@ -23,7 +23,7 @@ if ($fPrograma && in_array($fPrograma, $progs, true)) {
     $paramsAmb[] = $fPrograma;
 }
 
-// 1. Resumen consolidado por cada Área / Ambiente / Laboratorio
+// 1. Resumen consolidado por Área / Ambiente / Laboratorio
 $resumenAreas = consulta(
     "SELECT a.id AS ambiente_id, a.codigo AS ambiente_cod, a.nombre AS ambiente, a.tipo,
             pr.id AS programa_id, pr.codigo AS programa_cod, pr.nombre AS programa_nombre,
@@ -73,7 +73,7 @@ $equiposDetalle = consulta(
     $paramsEq
 )->fetchAll();
 
-// Calcular KPIs totales para encabezados de Excel y PDF
+// Totales KPI
 $kpiTotal      = count($equiposDetalle);
 $kpiCompletos  = 0;
 $kpiPendientes = 0;
@@ -156,22 +156,21 @@ if ($exportar === 'excel' || $exportar === 'csv') {
 </head>
 <body>
   <table>
-    <col width="90">
-    <col width="220">
-    <col width="130">
-    <col width="190">
-    <col width="115">
-    <col width="150">
-    <col width="145">
-    <col width="110">
     <col width="95">
-    <col width="110">
-    <col width="120">
+    <col width="230">
     <col width="135">
-    <col width="125">
-    <col width="220">
+    <col width="200">
+    <col width="120">
+    <col width="155">
+    <col width="150">
+    <col width="115">
+    <col width="95">
+    <col width="115">
+    <col width="120">
+    <col width="145">
+    <col width="130">
+    <col width="230">
 
-    <!-- Encabezado Institucional -->
     <tr>
       <td colspan="14" class="banner-inst">INSTITUTO DE EDUCACIÓN SUPERIOR TECNOLÓGICO PÚBLICO "UTCUBAMBA" · CÓD. MODULAR 741744</td>
     </tr>
@@ -185,8 +184,6 @@ if ($exportar === 'excel' || $exportar === 'csv') {
         &nbsp;&nbsp;|&nbsp;&nbsp;<strong>Filtro:</strong> <?= $fSoloMant === 1 ? 'Solo Equipos con Mantenimiento' : 'Todos los Bienes del Área' ?>
       </td>
     </tr>
-
-    <!-- Tarjetas de Resumen KPI -->
     <tr>
       <td colspan="2" class="kpi-lbl">TOTAL REGISTROS</td>
       <td colspan="1" class="kpi-val" style="color:#1E3A8A;"><?= $kpiTotal ?></td>
@@ -200,8 +197,6 @@ if ($exportar === 'excel' || $exportar === 'csv') {
       <td colspan="1" class="kpi-val" style="background:#FEE2E2;color:#991B1B;"><?= $kpiVencidos ?></td>
     </tr>
     <tr><td colspan="14" style="height: 8px; border: none;"></td></tr>
-
-    <!-- Encabezados de la Tabla Principal -->
     <tr>
       <th class="th-main">PROGRAMA</th>
       <th class="th-main">ÁREA / AMBIENTE / LABORATORIO</th>
@@ -218,14 +213,12 @@ if ($exportar === 'excel' || $exportar === 'csv') {
       <th class="th-main">ESTADO SERVICIO</th>
       <th class="th-main">RESPONSABLE DE ÁREA</th>
     </tr>
-
     <?php foreach ($equiposDetalle as $idx => $row): ?>
       <?php
         $esp = json_decode((string) ($row['especificaciones'] ?? '{}'), true) ?: [];
         $estSrv = strtoupper((string) ($esp['estado_servicio'] ?? 'PENDIENTE'));
         $zebra = ($idx % 2 === 1) ? ' td-zebra' : '';
         $srvClass = ($estSrv === 'COMPLETO') ? 'badge-ok' : 'badge-warn';
-
         if ($row['dias_restantes'] === null) {
             $diasTxt = 'No aplica';
             $diasClass = 'center';
@@ -313,9 +306,9 @@ if ($exportar === 'pdf') {
 </head>
 <body>
   <div class="toolbar no-print">
-    <div><strong>Vista Previa Lista para PDF / Impresión</strong> — Elija <em>"Guardar como PDF"</em> en la ventana de impresión.</div>
+    <div><strong>Vista Previa Lista para PDF / Impresión</strong> — En el cuadro de impresión elija <em>"Guardar como PDF"</em> (o presione <code>Ctrl + P</code>).</div>
     <div>
-      <button type="button" class="btn btn-print" id="btnImprimirAhora">Imprimir / Guardar PDF</button>
+      <button type="button" class="btn btn-print" id="btnImprimirAhora">Guardar PDF / Imprimir</button>
       <a class="btn btn-back" href="<?= e(url('admin/reportes.php?' . http_build_query(['programa' => $fPrograma, 'ambiente' => $fAmbiente, 'solo_mant' => $fSoloMant]))) ?>">← Volver</a>
     </div>
   </div>
@@ -417,7 +410,7 @@ if ($exportar === 'pdf') {
 
   <script>
     document.getElementById('btnImprimirAhora').addEventListener('click', function () { window.print(); });
-    window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 350); });
+    window.addEventListener('load', function () { setTimeout(function () { window.print(); }, 300); });
   </script>
 </body>
 </html>
@@ -450,15 +443,14 @@ cabecera('Reportes por Área y Programa de Estudio', $u);
   </div>
   <div class="d-flex gap-2">
     <a class="btn btn-success fw-semibold" href="<?= e(url('admin/reportes.php?' . http_build_query(['programa' => $fPrograma, 'ambiente' => $fAmbiente, 'solo_mant' => $fSoloMant, 'exportar' => 'excel']))) ?>">
-      <i class="bi bi-file-earmark-excel me-1"></i>Exportar a Excel (Con Formato)
+      <i class="bi bi-file-earmark-excel me-1"></i>Exportar a Excel (Con Colores)
     </a>
-    <a class="btn btn-danger fw-semibold" target="_blank" href="<?= e(url('admin/reportes.php?' . http_build_query(['programa' => $fPrograma, 'ambiente' => $fAmbiente, 'solo_mant' => $fSoloMant, 'exportar' => 'pdf']))) ?>">
-      <i class="bi bi-file-earmark-pdf me-1"></i>Imprimir Reporte / PDF
+    <a class="btn btn-danger fw-semibold" href="<?= e(url('admin/reportes.php?' . http_build_query(['programa' => $fPrograma, 'ambiente' => $fAmbiente, 'solo_mant' => $fSoloMant, 'exportar' => 'pdf']))) ?>">
+      <i class="bi bi-file-earmark-pdf me-1"></i>Ver / Imprimir PDF
     </a>
   </div>
 </div>
 
-<!-- Filtros del Reporte -->
 <form method="get" class="card card-body shadow-sm border-0 mb-4 no-print">
   <div class="row g-2 align-items-end">
     <div class="col-md-3">
@@ -492,7 +484,6 @@ cabecera('Reportes por Área y Programa de Estudio', $u);
   </div>
 </form>
 
-<!-- Tabla 1: Consolidado por Área / Ambiente / Laboratorio -->
 <div class="card shadow-sm border-0 mb-4">
   <div class="card-header bg-white py-3">
     <h2 class="h6 fw-bold mb-0 text-uppercase text-primary">
@@ -537,7 +528,6 @@ cabecera('Reportes por Área y Programa de Estudio', $u);
   </div>
 </div>
 
-<!-- Tabla 2: Detalle de Equipos, Fechas de Mantenimiento y Tiempo Restante -->
 <div class="card shadow-sm border-0">
   <div class="card-header bg-white py-3 d-flex justify-content-between align-items-center">
     <h2 class="h6 fw-bold mb-0 text-uppercase text-primary">
