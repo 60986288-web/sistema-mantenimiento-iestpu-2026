@@ -345,21 +345,21 @@ renderHeader($scope ? "Reportes Oficiales — {$scope}" : 'Reportes Oficiales (P
         <table class="oficial-bienes-tbl table table-sm table-hover mb-0">
             <thead>
                 <tr>
-                    <th rowspan="2" style="width:36px;">N.°</th>
+                    <th rowspan="2" style="width:3.5%;">N.°</th>
                     <th colspan="11">DESCRIPCIÓN DE LOS BIENES</th>
                 </tr>
                 <tr>
-                    <th class="nowrap-col">CÓDIGO PATRIMONIAL</th>
-                    <th class="nowrap-col">CÓDIGO INTERNO</th>
-                    <th>DENOMINACIÓN</th>
-                    <th>MARCA</th>
-                    <th>MODELO</th>
-                    <th>TIPO</th>
-                    <th>COLOR</th>
-                    <th>SERIE</th>
-                    <th>DIMENSIONES (Medidas)</th>
-                    <th class="nowrap-col">SITUACIÓN (1)</th>
-                    <th class="nowrap-col">ESTADO DE CONSERVACIÓN (2)</th>
+                    <th style="width:7.5%;">CÓDIGO PATRIMONIAL</th>
+                    <th style="width:11%;">CÓDIGO INTERNO</th>
+                    <th style="width:14.5%;">DENOMINACIÓN</th>
+                    <th style="width:8%;">MARCA</th>
+                    <th style="width:9%;">MODELO</th>
+                    <th style="width:7.5%;">TIPO</th>
+                    <th style="width:7%;">COLOR</th>
+                    <th style="width:10%;">SERIE</th>
+                    <th style="width:8.5%;">DIMENSIONES (Medidas)</th>
+                    <th style="width:6%;">SITUACIÓN (1)</th>
+                    <th style="width:7.5%;">ESTADO DE CONSERVACIÓN (2)</th>
                 </tr>
             </thead>
             <tbody>
@@ -372,8 +372,8 @@ renderHeader($scope ? "Reportes Oficiales — {$scope}" : 'Reportes Oficiales (P
                     ?>
                         <tr>
                             <td class="text-center"><?= $n++ ?></td>
-                            <td class="nowrap-col"><?= h(clean_tech_value($b['correlativo'] ?? '')) ?></td>
-                            <td class="nowrap-col fw-bold text-primary"><?= h(clean_tech_value($b['codigo_apsti'] ?? $b['codigo_interno'] ?? '')) ?></td>
+                            <td><?= h(clean_tech_value($b['correlativo'] ?? '')) ?></td>
+                            <td class="fw-bold text-primary"><?= h(clean_tech_value($b['codigo_apsti'] ?? $b['codigo_interno'] ?? '')) ?></td>
                             <td class="fw-semibold"><?= h(clean_tech_value($b['denominacion'] ?? '')) ?></td>
                             <td><?= h(clean_tech_value($b['marca'] ?? '')) ?></td>
                             <td><?= h(clean_tech_value($b['modelo'] ?? '')) ?></td>
