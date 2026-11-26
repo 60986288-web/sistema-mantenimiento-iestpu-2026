@@ -122,9 +122,10 @@ renderHeader($scope ? "Inventario Activo — {$scope}" : 'Inventario General de 
 
 <div class="card-clean p-3">
     <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0 small">
+        <table class="table table-hover table-grid align-middle mb-0 small">
             <thead>
                 <tr>
+                    <th class="text-center" style="width:38px;">N.°</th>
                     <th class="nowrap-col">Código</th>
                     <th>Denominación / Especificaciones</th>
                     <th>Marca / Serie</th>
@@ -136,9 +137,9 @@ renderHeader($scope ? "Inventario Activo — {$scope}" : 'Inventario General de 
             </thead>
             <tbody>
                 <?php if (empty($bienes)): ?>
-                    <tr><td colspan="7" class="text-center text-muted py-4">No se encontraron bienes con el filtro aplicado.</td></tr>
+                    <tr><td colspan="8" class="text-center text-muted py-4">No se encontraron bienes con el filtro aplicado.</td></tr>
                 <?php else: ?>
-                    <?php foreach ($bienes as $b):
+                    <?php $nEq = 1; foreach ($bienes as $b):
                         $reqM = (int)($b['requiere_mantenimiento'] ?? 1);
                         $estServ = (string)($b['estado_servicio'] ?? 'Servicio Pendiente');
                         $badgeServ = $reqM === 0
@@ -148,6 +149,7 @@ renderHeader($scope ? "Inventario Activo — {$scope}" : 'Inventario General de 
                                 : '<span class="badge bg-warning text-dark">Servicio Pendiente</span>');
                     ?>
                         <tr>
+                            <td class="text-center fw-semibold text-muted"><?= $nEq++ ?></td>
                             <td class="nowrap-col fw-bold text-primary"><?= h($b['codigo_apsti']) ?></td>
                             <td>
                                 <div class="fw-semibold"><?= h($b['denominacion']) ?></div>

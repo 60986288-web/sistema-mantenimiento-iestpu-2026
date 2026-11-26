@@ -138,9 +138,10 @@ renderHeader('Formulario de Inventariado — Programa APSTI', 'inv_apsti');
 <div class="card-clean p-3">
     <h6 class="fw-bold mb-3">Equipos Registrados en APSTI</h6>
     <div class="table-responsive">
-        <table class="table table-hover align-middle small mb-0">
+        <table class="table table-hover table-grid align-middle small mb-0">
             <thead>
                 <tr>
+                    <th class="text-center" style="width:38px;">N.°</th>
                     <th class="nowrap-col">Código APSTI</th>
                     <th>Denominación</th>
                     <th>Ambiente</th>
@@ -150,8 +151,9 @@ renderHeader('Formulario de Inventariado — Programa APSTI', 'inv_apsti');
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($equiposApsti as $e): ?>
+                <?php $nAp = 1; foreach ($equiposApsti as $e): ?>
                     <tr>
+                        <td class="text-center fw-semibold text-muted"><?= $nAp++ ?></td>
                         <td class="nowrap-col fw-bold text-primary"><?= h($e['codigo_apsti']) ?></td>
                         <td class="fw-semibold"><?= h($e['denominacion']) ?></td>
                         <td><?= h($e['area_ambiente']) ?></td>

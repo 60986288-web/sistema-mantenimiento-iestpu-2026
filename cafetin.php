@@ -37,9 +37,10 @@ renderHeader('Módulo de Inventario — Cafetín Institucional', 'cafetin');
 
 <div class="card-clean p-3">
     <div class="table-responsive" style="overflow-x:auto;">
-        <table class="table table-hover align-middle small mb-0">
+        <table class="table table-hover table-grid align-middle small mb-0">
             <thead>
                 <tr>
+                    <th class="text-center" style="width:38px;">N.°</th>
                     <th class="nowrap-col">Código</th>
                     <th>Denominación</th>
                     <th>Marca / Modelo</th>
@@ -51,10 +52,11 @@ renderHeader('Módulo de Inventario — Cafetín Institucional', 'cafetin');
                 </tr>
             </thead>
             <tbody>
-                <?php foreach ($bienesCafetin as $b):
+                <?php $nCaf = 1; foreach ($bienesCafetin as $b):
                     $reqM = (int)($b['requiere_mantenimiento'] ?? 0);
                 ?>
                     <tr>
+                        <td class="text-center fw-semibold text-muted"><?= $nCaf++ ?></td>
                         <td class="nowrap-col fw-bold text-primary"><?= h($b['codigo_apsti']) ?></td>
                         <td class="fw-semibold"><?= h($b['denominacion']) ?></td>
                         <td><?= h(clean_tech_value($b['marca'] ?? '')) ?> / <?= h(clean_tech_value($b['modelo'] ?? '')) ?></td>

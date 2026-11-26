@@ -236,14 +236,60 @@ function renderHeader(string $titulo, string $activeMenu = 'inicio'): void {
             box-shadow: 0 2px 8px rgba(15,23,42,.04);
             height: 100%;
         }
-        .table thead th {
-            background: var(--petrol);
-            color: #fff;
-            font-size: .8rem;
-            font-weight: 600;
-            border: none;
-            vertical-align: middle;
+        /* Estilo unificado de tablas con cuadrícula ordenada (como Reportes) en todos los módulos */
+        .table-grid {
+            width: 100%;
+            border-collapse: collapse !important;
+            border: 1px solid #94a3b8 !important;
+            background: #ffffff;
+            font-size: .82rem;
         }
+        .table thead th,
+        .table-grid thead th {
+            background: var(--petrol) !important;
+            color: #fff !important;
+            font-size: .75rem !important;
+            font-weight: 700 !important;
+            text-transform: uppercase;
+            letter-spacing: .02em;
+            border: 1px solid #1b5254 !important;
+            padding: 8px 8px !important;
+            vertical-align: middle !important;
+        }
+        .table tbody td,
+        .table-grid tbody td {
+            border: 1px solid #cbd5e1 !important;
+            padding: 7px 8px !important;
+            vertical-align: middle !important;
+        }
+        .table tbody tr:nth-child(even) td {
+            background-color: #f8fafc;
+        }
+        .table-hover tbody tr:hover td {
+            background-color: #ecfdf5 !important;
+        }
+        .step-card {
+            background: var(--surface);
+            border: 1px solid #cbd5e1;
+            border-left: 5px solid var(--petrol);
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(15,23,42,.05);
+            overflow: hidden;
+        }
+        .step-card.is-pending { border-left-color: #f59e0b; }
+        .step-card.is-verified { border-left-color: #0ea5e9; }
+        .step-card.is-closed { border-left-color: #10b981; }
+        .step-section-box {
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 9px;
+            padding: 12px 14px;
+        }
+        body.dark-mode .step-section-box {
+            background: #0e1b22 !important;
+            border-color: #243b49 !important;
+        }
+        body.dark-mode .table-grid { border-color: #243b49 !important; }
         .nowrap-col { white-space: nowrap !important; }
         .btn-petrol { background: var(--petrol); color: #fff; border: none; }
         .btn-petrol:hover { background: var(--petrol-dark); color: #fff; }
