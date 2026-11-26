@@ -291,6 +291,63 @@ function renderHeader(string $titulo, string $activeMenu = 'inicio'): void {
         }
         body.dark-mode .table-grid { border-color: #243b49 !important; }
         .nowrap-col { white-space: nowrap !important; }
+        
+        /* Formato Oficial SBN / IESTPU (sin recorte horizontal en pantalla ni impresión) */
+        .oficial-sheet {
+            background: #fff;
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            padding: 16px;
+        }
+        .oficial-header-tbl {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: .76rem;
+            margin-bottom: 10px;
+        }
+        .oficial-header-tbl td {
+            border: 1px solid #94a3b8;
+            padding: 4px 8px;
+            vertical-align: middle;
+        }
+        .oficial-bienes-tbl {
+            width: 100% !important;
+            table-layout: fixed !important;
+            border-collapse: collapse !important;
+            font-size: .72rem !important;
+            background: #fff;
+        }
+        .oficial-bienes-tbl th,
+        .oficial-bienes-tbl td {
+            border: 1px solid #64748b !important;
+            padding: 5px 4px !important;
+            vertical-align: middle !important;
+            white-space: normal !important;
+            word-wrap: break-word !important;
+            overflow-wrap: break-word !important;
+            line-height: 1.2;
+        }
+        .oficial-bienes-tbl thead th {
+            background: #0f3b3c !important;
+            color: #fff !important;
+            text-align: center !important;
+            font-size: .67rem !important;
+            font-weight: 700 !important;
+            letter-spacing: .01em;
+        }
+        .oficial-bienes-tbl tbody tr:nth-child(even) td {
+            background: #f8fafc;
+        }
+        .oficial-bienes-tbl tbody tr:hover td {
+            background: #ecfdf5 !important;
+        }
+        body.dark-mode .oficial-sheet { background: #13222b; border-color: #243b49; }
+        body.dark-mode .oficial-header-tbl td { border-color: #2d4857; color: #e2e8f0; }
+        body.dark-mode .oficial-bienes-tbl { background: #13222b; }
+        body.dark-mode .oficial-bienes-tbl td { border-color: #2d4857 !important; color: #e2e8f0; }
+        body.dark-mode .oficial-bienes-tbl tbody tr:nth-child(even) td { background: #0e1b22; }
+        body.dark-mode .oficial-bienes-tbl tbody tr:hover td { background: #18303b !important; }
+
         .btn-petrol { background: var(--petrol); color: #fff; border: none; }
         .btn-petrol:hover { background: var(--petrol-dark); color: #fff; }
         .btn-emerald { background: var(--emerald-dark); color: #fff; border: none; }
