@@ -164,7 +164,7 @@ $nombreAreaEquipos = $mapaAreasOficial[$filtroProg] ?? ($filtroProg !== '' ? $fi
             <td><strong>ÁREA / PROGRAMA:</strong></td>
             <td><strong><?= h($nombreAreaEquipos) ?></strong></td>
             <td><strong>FECHA DE EMISIÓN:</strong></td>
-            <td><?= date('d/m/Y') ?> (<?= count($bienesCafetin) ?> registros)</td>
+            <td><?= date('d/m/Y') ?> (<?= count($bienes) ?> registros)</td>
         </tr>
     </table>
 
